@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ticket Lab · 抢票实验室</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231c5745'/%3E%3Ctext x='7' y='23' fill='white' font-size='22'%3ET%3C/text%3E%3C/svg%3E"><link rel="stylesheet" href="/style.css"></head>
+<body>
+<header><a class="brand" href="#"><span class="logo">T<span>↗</span></span> TICKET<span class="light">/ LAB</span></a><nav><a href="#experiment" class="current">实验控制台</a><a href="#manualPanel">亲自抢票</a><a href="#historyPanel">轮次对照</a><button id="helpBtn" class="navbtn">原理说明 ↗</button></nav><span class="connection" id="connection"><i></i> 正在连接</span></header>
+<main id="experiment">
+<section class="intro"><div><div class="eyebrow">A SMALL LAB. A FAIRER QUEUE.</div><h1>同一场开售，<span>不同的机会。</span></h1><p>让自动程序、手动群众和你，竞争同一批票。看看速度何时有效，规则如何改变结果。</p></div><div class="local-tag"><span>LOCAL EXPERIMENT</span><b>自建环境 · 模拟购票</b><small>共享库存 / 真实服务处理 / 不涉及付款</small></div></section>
+<div class="workspace">
+<aside class="panel settings">
+<div class="section-heading"><span class="step">01</span><h2>设置这场实验</h2></div>
+<label class="field-label">售票规则</label>
+<div class="modes" role="group" aria-label="售票规则">
+<button class="mode selected" data-mode="fcfs"><span class="radio"></span><span><b>先到先得</b><small>先抵达服务，先获得资格</small></span><span class="mode-icon">↗</span></button>
+<button class="mode" data-mode="throttled"><span class="radio"></span><span><b>限流去重</b><small>每个身份至少间隔 800ms</small></span><span class="mode-icon">≋</span></button>
+<button class="mode" data-mode="lottery"><span class="radio"></span><span><b>窗口抽签</b><small>一人一份资格，统一随机排序</small></span><span class="mode-icon">⌘</span></button>
+</div>
+<form id="settingsForm">
+<div class="formgrid"><label>总票数 <input name="stock" type="number" min="1" max="200" value="30" required></label><label>手动群众 <input name="crowd" type="number" min="0" max="1000" value="120" required></label><label>抢票账号 <input name="bots" type="number" min="0" max="100" value="12" required></label><label>开售倒计时 / 秒 <input name="countdown" type="number" min="0" max="30" value="8" required></label></div>
+<details><summary>时间与策略 <span>＋</span></summary><div class="formgrid advanced"><label>抢票重试间隔 / ms<input name="botInterval" type="number" min="40" max="3000" value="150" required></label><label>共同上行延迟 / ms<input name="networkMs" type="number" min="0" max="400" value="60" required></label><label>延迟波动 / ±ms<input name="jitterMs" type="number" min="0" max="400" value="40" required></label><label>开售持续 / 秒<input name="duration" type="number" min="4" max="120" value="25" required></label><label>抽签窗口 / 秒<input name="windowSeconds" type="number" min="0.2" max="20" step="0.2" value="5" required></label><label>随机种子<input name="seed" type="number" min="0" max="4294967295" value="42" required></label></div><p class="hint">两组共享延迟分布。种子控制随机采样，实际时序仍受系统调度与真人操作影响。</p></details>
+<button class="primary start" id="startBtn" type="submit">▶ &nbsp; 开始这场实验</button>
+<button class="secondary reset" type="button" id="resetBtn">重置当前轮次</button>
+</form><div class="scenario"><span>想先亲自试试？</span><button id="soloBtn">载入练习配置 →</button><small>8 张票 · 12 位群众 · 2 个抢票账号</small></div>
+</aside>
+<div class="stage">
+<section class="sale panel">
+<div class="sale-top"><div><span class="eyebrow">LIVE TICKETING / 售票端</span><h2>夏末回声 · 校园音乐现场</h2><p>实验场次 001　/　普通票　/　一人一票</p></div><span id="statusBadge" class="badge">等待开始</span></div>
+<div class="sale-core"><div class="timer-wrap"><span id="timerLabel">距离开售</span><strong id="timer">00:08<span>.0</span></strong><small id="roundText">选择规则，开启第一轮</small></div><div class="stockboard"><div><b id="available">30</b><span>可分配</span></div><div><b id="held">0</b><span>待确认</span></div><div><b id="confirmed">0</b><span>已出票</span></div></div></div>
+<div class="ticket-map" id="ticketMap" aria-label="票额分配视图"></div>
+<div class="map-caption"><span>票额视图 · 方块表示一张票的当前归属</span><div><i class="dot crowd"></i>群众 <i class="dot bot"></i>程序 <i class="dot manual"></i>你 <i class="dot free"></i>余票</div></div>
+<div class="rule-note" id="ruleNote">↗ 先到先得：库存由实际到达顺序竞争，自动化通常更容易抢先提交。</div>
+</section>
+<section class="contestants">
+<article class="panel contestant crowd-card"><div class="card-top"><span class="actor-icon">♧</span><span class="live-dot"></span></div><h3>手动抢票群众 <span id="crowdCount">120 人</span></h3><p>独立反应、随机重试，部分用户晚到或放弃。</p><div class="actor-bottom"><strong id="crowdWins">0<small>张已出票</small></strong><div><b id="crowdRate">0%</b><small>最终获票率</small></div></div><div class="microbar"><i id="crowdBar"></i></div><div class="actor-foot"><span id="crowdRequests">0 次请求</span><span id="crowdHolds">0 人待确认</span></div></article>
+<article class="panel contestant bot-card"><div class="card-top"><span class="actor-icon">⌘</span><span class="live-dot"></span></div><h3>自动抢票程序 <span id="botCount">12 账号</span></h3><p>准时启动、快速提交，未成功时按间隔重试。</p><div class="actor-bottom"><strong id="botWins">0<small>张已出票</small></strong><div><b id="botRate">0%</b><small>最终获票率</small></div></div><div class="microbar"><i id="botBar"></i></div><div class="actor-foot"><span id="botRequests">0 次请求</span><span id="botLimited">0 次被限流</span></div></article>
+</section>
+<section class="panel manual-panel" id="manualPanel"><div class="manual-copy"><div class="eyebrow">YOUR TURN / 操作者手动抢票</div><h3>现在，轮到你了。</h3><p id="manualMessage" role="status" aria-live="polite">你和所有参与者使用同一库存、同一分配规则。</p><div id="manualOrder" class="order-info"></div></div><div class="manual-actions"><button id="claimBtn" class="primary claim" disabled>立即抢票 <span>↗</span></button><div class="order-actions"><button id="confirmBtn" disabled>确认订单</button><button id="cancelBtn" disabled>取消资格</button></div><small id="manualHint">开售后点击；占票成功后需手动确认。</small></div></section>
+</div>
+</div>
+<section class="analysis-row">
+<article class="panel chart-panel"><div class="panel-title"><div><span class="step">02</span><h2>竞争正在发生</h2></div><span class="tag">累计已出票</span></div><div class="chart" id="chart"></div><div class="chart-key"><span><i class="dot crowd"></i>手动群众</span><span><i class="dot bot"></i>抢票程序</span><span><i class="dot manual"></i>操作者</span></div></article>
+<article class="panel metrics-panel"><h2>别只看谁抢得快</h2><div class="gain"><strong id="gain">—</strong><span>自动化优势倍数</span></div><p id="gainNote">程序获票率 ÷ 群众获票率<br>人数不同，也能比较每个身份的机会。</p><div class="metric-line"><span>所有购票请求</span><b id="totalRequests">0</b></div><div class="metric-line"><span>当前服务队列</span><b id="queueDepth">0</b></div><div class="metric-line"><span>平均业务处理耗时</span><b id="processing">—</b></div><small>耗时不含模拟上行与页面轮询；样本不足时不判断公平。</small></article>
+</section>
+<section class="panel logs-panel"><div class="panel-title"><div><span class="step">03</span><h2>售票现场</h2></div><select id="logFilter" aria-label="筛选事件"><option value="all">所有事件</option><option value="manual">只看我的</option><option value="crowd">手动群众</option><option value="bot">抢票程序</option><option value="system">系统事件</option></select></div><div id="eventLog" class="event-log"><div class="empty">还没有事件。开始实验后，请求、占位、确认与释放会出现在这里。</div></div></section>
+<section class="panel history-panel" id="historyPanel"><div class="panel-title"><div><span class="step">04</span><h2>上一轮，发生了什么？</h2></div><button id="exportBtn" class="text-btn">导出本轮数据 ↓</button></div><div class="table-scroll"><table><thead><tr><th>轮次 / 规则</th><th>票数 / 人数</th><th>群众获票率</th><th>程序获票率</th><th>优势倍数</th><th>你的结果</th><th>请求量</th></tr></thead><tbody id="historyBody"><tr><td colspan="7" class="empty">完整运行一轮后，在这里比较结果。重置会保留已完成轮次。</td></tr></tbody></table></div><p class="hint">比较规则时请保持人数、票数和网络参数一致。一次抽签有随机波动，不能据此宣称“完全公平”。</p></section>
+<footer><span><b>TICKET / LAB</b>　一个看得见规则的抢票实验</span><span>本机进程内用户模拟 · 同一业务队列 · 无真实支付</span></footer>
+</main>
+<dialog id="helpDialog"><div class="dialog-head"><span class="eyebrow">HOW IT WORKS</span><button id="closeHelp" aria-label="关闭说明">×</button></div><h2>模拟行为，让竞争真实发生。</h2><p>售票端是真实运行的本地 HTTP 服务。模拟群众和程序在服务进程内安排请求，经模拟上行延迟后进入与操作者相同的业务队列，并竞争同一库存。</p><h3>四个角色</h3><p>群众开售后约 0.3–2.5 秒反应，部分更晚；失败后约 0.9–2.6 秒重试，最多 6 次。程序在开售后约 0–65 毫秒首次提交。你通过网页亲自点击。模拟账号占票后会自动模拟确认或少量取消，你需要手动确认。</p><h3>窗口抽签怎么防高频？</h3><p>窗口内每个身份只有一个资格，结束后随机排序、按库存分配，超时资格由候补递补。它削弱速度优势，但会增加等待；错过窗口的人不能参与。系统不会读取“真人／程序”标签判断资格。</p><h3>这个 Demo 的边界</h3><p>所有浏览器标签共用一个操作者身份。状态保存在本地服务内存，重启后清空。固定种子只固定随机采样，不能固定操作系统时序。这里模拟上行延迟，不完整模拟互联网带宽和下行；不连接真实票务平台。</p><button id="understoodBtn" class="primary">明白了，去体验</button></dialog>
+<div id="toast" role="status" class="toast"></div><script type="module" src="/app.js"></script>
+</body></html>
