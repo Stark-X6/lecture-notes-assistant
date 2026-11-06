@@ -1,6 +1,24 @@
 const { ipcRenderer } = require("electron");
 window.addEventListener("DOMContentLoaded", () => {
   let ctx, stream, source, worklet, silent;
+  let pendingFlush;
+  function flushWorklet(requestId) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingFlush = null;
+        reject(new Error("音频尾帧确认超时"));
+      }, 3000);
+      pendingFlush = {
+        requestId,
+        resolve: () => {
+          clearTimeout(timer);
+          pendingFlush = null;
+          resolve();
+        },
+      };
+      worklet.port.postMessage({ type: "flush", requestId });
+    });
+  }
   ipcRenderer.on("capture:command", async (_, cmd) => {
     try {
       if (cmd.type === "start") {
@@ -19,21 +37,24 @@ window.addEventListener("DOMContentLoaded", () => {
         silent = ctx.createGain();
         silent.gain.value = 0;
         source.connect(worklet).connect(silent).connect(ctx.destination);
-        worklet.port.onmessage = (e) =>
-          ipcRenderer.send("capture:frame", e.data);
+        worklet.port.onmessage = (e) => {
+          if (e.data?.type === "flushed") {
+            if (pendingFlush?.requestId === e.data.requestId)
+              pendingFlush.resolve();
+          } else ipcRenderer.send("capture:frame", e.data);
+        };
         stream.getAudioTracks()[0].onended = () =>
           ipcRenderer.send("capture:error", "麦克风已断开");
         await ctx.resume();
       }
       if (cmd.type === "pause") {
         await ctx.suspend();
-        worklet.port.postMessage("flush");
+        await flushWorklet(cmd.id);
       }
       if (cmd.type === "resume") await ctx.resume();
       if (cmd.type === "stop") {
         await ctx.suspend();
-        worklet.port.postMessage("flush");
-        await new Promise((r) => setTimeout(r, 80));
+        await flushWorklet(cmd.id);
         stream?.getTracks().forEach((t) => t.stop());
         await ctx.close();
       }

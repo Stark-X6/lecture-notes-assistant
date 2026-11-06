@@ -79,9 +79,26 @@ const fallbackLocalAsr: Obj = {
   state: "missing",
   progress: 0,
   error: null,
+  modelId: "sensevoice",
   modelName: "SenseVoiceSmall INT8",
   modelDir: "",
   queued: 0,
+  models: [
+    {
+      id: "sensevoice",
+      name: "SenseVoiceSmall INT8",
+      downloadMB: 240,
+      ready: false,
+      modelPage: "",
+    },
+    {
+      id: "qwen3",
+      name: "Qwen3-ASR-0.6B INT8",
+      downloadMB: 987,
+      ready: false,
+      modelPage: "",
+    },
+  ],
 };
 function Markdown({ children }: { children: string }) {
   return (
@@ -271,23 +288,16 @@ function App() {
     }
   };
   const playAudio = async (u: Obj) => {
-    const chunk = s?.chunks.find(
-      (c: Obj) =>
-        c.lessonId === lid &&
-        u.startMs !== null &&
-        c.startMs <= u.startMs &&
-        c.endMs > u.startMs,
-    );
-    if (!chunk) {
+    const data = await invoke("audio.read", { utteranceId: u.id });
+    if (!data) {
       setNotice("该转录没有可回听的本地音频");
       return;
     }
-    const data = await invoke("audio.read", { id: chunk.id });
     const url = URL.createObjectURL(
       new Blob([new Uint8Array(data)], { type: "audio/wav" }),
     );
     const audio = new Audio(url);
-    audio.currentTime = (u.startMs - chunk.startMs) / 1000;
+    audio.currentTime = 0;
     audio.onended = () => URL.revokeObjectURL(url);
     await audio.play();
   };
@@ -337,6 +347,23 @@ function App() {
   const localAsrReady = Boolean(localAsr.ready || localAsrState === "ready");
   const localAsrLabel =
     localAsrStateNames[localAsrState] || (localAsrReady ? "已就绪" : "状态未知");
+  const cloudAsrReady =
+    s.config?.mode === "http" &&
+    (s.config?.asrProvider === "tingwu"
+      ? Boolean(
+          s.config?.tingwuAppKey &&
+            s.config?.hasTingwuId &&
+            s.config?.hasTingwuSecret,
+        )
+      : Boolean(s.config?.asrUrl && s.config?.hasAsrKey));
+  const retranscribeReady =
+    asrBackend === "local"
+      ? localAsrReady
+      : cloudAsrReady &&
+        Boolean(
+          course?.consent?.audio &&
+            course?.consent?.version === s.config?.version,
+        );
   const localAsrBanner =
     localAsrState === "downloading"
       ? "本地语音识别：正在下载模型（" + Math.round(Number(localAsr.progress) || 0) + "%）"
@@ -345,7 +372,7 @@ function App() {
         : ["loading", "recognizing"].includes(localAsrState)
           ? "本地语音识别：" + localAsrLabel
           : localAsrReady
-            ? "本地语音识别已启用：音频留在本机，CPU 离线识别约 5 秒分段"
+            ? "本地语音识别已启用：音频留在本机，约 5 秒落盘，按 12–20 秒结合低能量停顿取边界"
             : "本地语音识别：" + localAsrLabel + "，打开设置按需下载模型";
   return (
     <div className="app">
@@ -851,6 +878,7 @@ function App() {
                           className={
                             "utterance " +
                             (selected.includes(u.id) ? "selected " : "") +
+                            (u.needsReview ? "needs-review " : "") +
                             (focusSource === u.id ? "highlight" : "")
                           }
                         >
@@ -879,6 +907,15 @@ function App() {
                                 : "待归类"}
                             </span>
                             <small>{stateOf(u)}</small>
+                            {u.needsReview && (
+                              <span
+                                className="review-flag"
+                                title={u.reviewReason || "识别结果需要回听核对"}
+                              >
+                                <AlertCircle size={12} />
+                                待回听核对
+                              </span>
+                            )}
                             {u.startMs !== null && (
                               <button
                                 className="icon-btn"
@@ -897,6 +934,12 @@ function App() {
                               纠错
                             </button>
                           </div>
+                          {u.needsReview && (
+                            <div className="review-reason">
+                              <AlertCircle size={13} />
+                              {u.reviewReason || "识别结果疑似复述课程术语，请回听核对"}
+                            </div>
+                          )}
                           <p>{u.text}</p>
                         </div>
                       ))}
@@ -979,6 +1022,14 @@ function App() {
                 </button>
                 <span>·</span>
                 <button
+                  disabled={busy}
+                  title="确认后按当前语音识别配置处理原录音，原转录和笔记保留"
+                  onClick={() => setModal("retranscribe")}
+                >
+                  重新转写原录音
+                </button>
+                <span>·</span>
+                <button
                   onClick={() =>
                     void call("submission.create", { all: true, prompt: hint })
                   }
@@ -1018,6 +1069,7 @@ function App() {
               transcript: "添加课堂转录",
               assign: "修正主题归属",
               settings: "API 与本机设置",
+              retranscribe: "重新转写原录音",
               template: "课程模板",
               tasks: "处理任务",
               candidates: "候选更新",
@@ -1362,6 +1414,66 @@ function App() {
                 导入 MP3 / WAV 音频
               </button>
             </>
+          )}
+          {modal === "retranscribe" && (
+            <div className="retranscribe-form">
+              {asrBackend === "local" ? (
+                <>
+                  <p className="modal-description">
+                    将使用当前本地模型“{localAsr.modelName || "SenseVoiceSmall INT8"}”复制本课原始音频，创建一个新的课次并重新识别。原课次的音频、转录和笔记都会保留；本操作不会上传音频。
+                  </p>
+                  <p className="help">
+                    确认后会创建并选中新课次，识别会在后台继续。识别按低能量停顿取约 12–20 秒语段，推理速度取决于模型和电脑。
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="modal-description">
+                    确认后会将本课原录音发送至
+                    {s.config.asrProvider === "tingwu"
+                      ? "阿里云通义听悟"
+                      : "当前云端语音服务"}
+                    ，生成一个新的课次并重新转写。原课次的音频、转录和笔记都会保留，云端处理可能产生费用；只有点击下面的确认按钮后才会上传。
+                  </p>
+                  <p className="help">
+                    云端重新转写需要真实 API、有效凭据和本课音频授权；确认后会创建并选中新课次，云端转写会在后台继续。
+                  </p>
+                </>
+              )}
+              {!retranscribeReady && (
+                <p className="inline-error">
+                  {asrBackend === "local"
+                    ? "请先在本地 ASR 设置中安装并加载当前模型。"
+                    : "请先保存真实云端语音配置，并为本课保存音频授权。"}
+                </p>
+              )}
+              <div className="row end">
+                <button className="secondary" onClick={() => setModal("")}>取消</button>
+                <button
+                  className="primary"
+                  disabled={busy || !retranscribeReady}
+                  onClick={() =>
+                    void run(async () => {
+                      const result = await invoke("audio.retranscribe", {
+                        lessonId: lid,
+                      });
+                      if (!result?.lessonId)
+                        throw new Error("重新转写未返回新课次");
+                      setLid(result.lessonId);
+                      setTid("");
+                      setModal("");
+                      setNotice(
+                        asrBackend === "local"
+                          ? "已创建新课次，正在使用当前本地模型重新转写。"
+                          : "已创建新课次，正在提交云端重新转写任务。",
+                      );
+                    })
+                  }
+                >
+                  确认并创建新课次
+                </button>
+              </div>
+            </div>
           )}
         </Modal>
       )}
@@ -1887,11 +1999,22 @@ function SettingsForm({
     0,
     Math.min(100, Number(localState.progress) || 0),
   );
+  const localModels =
+    Array.isArray(localState.models) && localState.models.length
+      ? localState.models
+      : fallbackLocalAsr.models;
+  const selectedModelId = String(
+    localState.modelId || localModels[0]?.id || "sensevoice",
+  );
+  const selectedModel =
+    localModels.find((model: Obj) => String(model.id) === selectedModelId) ||
+    localModels[0];
   const [v, setV] = useState<Obj>(() => ({
       ...config,
       textKey: "",
       asrKey: "",
       asrBackend: configuredBackend,
+      asrProvider: config.asrProvider || "openai",
     })),
     [asrBackendDraft, setAsrBackendDraft] = useState<"local" | "cloud">(
       configuredBackend,
@@ -1907,7 +2030,9 @@ function SettingsForm({
     [message, setMessage] = useState(""),
     [localAction, setLocalAction] = useState(""),
     [localMessage, setLocalMessage] = useState(""),
-    [localTest, setLocalTest] = useState<Obj | null>(null);
+    [localTest, setLocalTest] = useState<Obj | null>(null),
+    [modelDraft, setModelDraft] = useState(selectedModelId),
+    [terms, setTerms] = useState(String(course?.asrTerms || ""));
   useEffect(() => {
     const backend =
       config.asrBackend === "local" || config.backend === "local"
@@ -1916,6 +2041,12 @@ function SettingsForm({
     setAsrBackendDraft(backend);
     setV((current) => ({ ...current, asrBackend: backend }));
   }, [config.asrBackend, config.backend]);
+  useEffect(() => {
+    setModelDraft(selectedModelId);
+  }, [selectedModelId]);
+  useEffect(() => {
+    setTerms(String(course?.asrTerms || ""));
+  }, [course?.asrTerms]);
   const field = (
     k: string,
     label: string,
@@ -1947,6 +2078,44 @@ function SettingsForm({
     }
     return result;
   };
+  const selectModel = async (modelId: string) => {
+    if (modelId === selectedModelId) return;
+    const previous = modelDraft;
+    setModelDraft(modelId);
+    const result = await runLocal("localAsr.select", { modelId });
+    if (result === null) {
+      setModelDraft(previous);
+      return;
+    }
+    setLocalTest(null);
+    setLocalMessage(
+      modelId === "qwen3"
+        ? "已选择 Qwen3-ASR-0.6B INT8，课堂术语提示仅作辅助。"
+        : "已选择 SenseVoiceSmall INT8，适合较快的 CPU 识别。",
+    );
+  };
+  const termCount = terms
+    .split(/[\n,，]/)
+    .map((term) => term.trim())
+    .filter(Boolean).length;
+  const saveTerms = async () => {
+    if (terms.length > 1000) {
+      setLocalMessage("课程术语最多 1000 个字符。");
+      return;
+    }
+    if (termCount > 80) {
+      setLocalMessage("课程术语最多 80 个，请合并或删除重复项。");
+      return;
+    }
+    const result = await runLocal("localAsr.terms", { lessonId, terms });
+    if (result !== null) {
+      setLocalMessage(
+        terms.trim()
+          ? "课程术语已保存，仅对 Qwen3-ASR 提供提示，不能保证识别一定正确。"
+          : "课程术语已清空。",
+      );
+    }
+  };
   const safeHost = (url: unknown, fallback: string) => {
     if (typeof url !== "string" || !url.trim()) return fallback;
     try {
@@ -1966,10 +2135,10 @@ function SettingsForm({
       <div className="settings-section local-asr-settings">
         <h3>
           <Mic size={16} />
-          本地语音识别 <span>SenseVoiceSmall INT8 · CPU 离线</span>
+          本地语音识别 <span>{selectedModel?.name || "SenseVoiceSmall INT8"} · CPU 离线</span>
         </h3>
         <p className="help local-asr-help">
-          本机 CPU 每次识别约 5 秒音频分段，不是逐字实时流式识别。模型约 240 MB，按需下载：首次安装需要网络，安装后可离线使用；音频始终留在本机。只有你勾选文本授权后，转录文字才会发送给云端整理，文本 API 可以不配置。
+          录音约每 5 秒落盘，识别会按约 12–20 秒并结合低能量停顿取边界，不是逐字实时流式识别；首次加载通常更慢，速度取决于硬件，Qwen3-ASR 可能带来更高的 CPU 延迟。模型按需下载，首次安装需要网络，安装后可离线使用；音频始终留在本机。只有你勾选文本授权后，转录文字才会发送给云端整理，文本 API 可以不配置。
         </p>
         <div className="asr-backend-row">
           <div>
@@ -1990,6 +2159,48 @@ function SettingsForm({
               云端 API
             </button>
           </div>
+        </div>
+        <div className="asr-model-picker">
+          <div className="row between">
+            <div>
+              <strong>本地模型</strong>
+              <span>切换模型会独立保存；只对之后的识别分片生效。</span>
+            </div>
+            <span className="tiny-badge">当前：{selectedModel?.name || "SenseVoiceSmall INT8"}</span>
+          </div>
+          <div className="asr-model-options" role="group" aria-label="选择本地识别模型">
+            {localModels.map((model: Obj) => {
+              const id = String(model.id);
+              const active = id === modelDraft;
+              const size = Number(model.downloadMB) || (id === "qwen3" ? 987 : 240);
+              const sizeLabel = size >= 900 ? "约 1 GB" : "约 " + Math.round(size) + " MB";
+              return (
+                <button
+                  type="button"
+                  key={id}
+                  className={"asr-model-option " + (active ? "selected" : "")}
+                  aria-pressed={active}
+                  disabled={localAction !== "" || active}
+                  onClick={() => void selectModel(id)}
+                >
+                  <span className="asr-model-option-copy">
+                    <strong>{model.name || id}</strong>
+                    <small>
+                      {id === "qwen3"
+                        ? "较大模型 · 约 1 GB，CPU 延迟较高"
+                        : "快速 · CPU 延迟较低"}
+                    </small>
+                  </span>
+                  <span className="asr-model-option-size">
+                    {model.ready ? "已安装" : "下载 " + sizeLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="help asr-model-help">
+            Qwen3-ASR 可能提高课堂术语覆盖，但模型更大、CPU 延迟更高；识别效果受录音和环境影响，不保证一定正确。
+          </p>
         </div>
         <div className="local-asr-model-card">
           <div className="row between">
@@ -2076,6 +2287,34 @@ function SettingsForm({
             </button>
           </div>
         </div>
+        <div className="asr-terms-box">
+          <label className="asr-terms-field">
+            <span>
+              课程术语（仅 Qwen3-ASR 生效）
+              <small>{termCount}/80 个 · {terms.length}/1000 字符</small>
+            </span>
+            <textarea
+              value={terms}
+              maxLength={1000}
+              rows={3}
+              placeholder="NP,NP完全,3-SAT,CLIQUE,非确定性图灵机"
+              onChange={(e) => setTerms(e.target.value)}
+            />
+          </label>
+          <div className="row between asr-terms-foot">
+            <span className="help">
+              每行或逗号一个；术语只作提示，可能仍识别错误，不会硬替换文字。保存时如正在识别，请先暂停或等当前分片完成。
+            </span>
+            <button
+              className="secondary compact"
+              disabled={localAction !== ""}
+              onClick={() => void saveTerms()}
+            >
+              <Check size={13} />
+              保存课程术语
+            </button>
+          </div>
+        </div>
         <div className="row between asr-save-row">
           <button
             className="primary"
@@ -2129,13 +2368,13 @@ function SettingsForm({
         </div>
       </div>
       <label>
-        文本 AI 模式
+        工作模式
         <select
           value={v.mode}
           onChange={(e) => setV({ ...v, mode: e.target.value })}
         >
-          <option value="off">关闭文本 AI · 本地转写仍可用</option>
-          <option value="http">HTTP 文本 AI · 使用真实 API</option>
+          <option value="off">关闭云端 AI · 本地转写仍可用</option>
+          <option value="http">真实 API · 云端语音与文本 AI</option>
           <option value="mock">模拟 · 仅用于功能演示</option>
         </select>
       </label>
@@ -2159,28 +2398,90 @@ function SettingsForm({
           )}
         </div>
       </div>
-      <div className="settings-section">
-        <h3>
-          <Mic size={16} />
-          云端语音识别 <span>Realtime 转录协议 / 文件转写协议</span>
-        </h3>
-        <p className="help">
-          仅在选择云端语音识别时使用。实时采用 OpenAI Realtime 转录事件协议，24 kHz PCM；HTTP
-          文本接口兼容不代表语音接口兼容。厂商专有协议需适配后使用。
-        </p>
-        {field("asrUrl", "实时 WSS 地址")}
-        <div className="form-grid">
-          {field("asrModel", "实时转录模型")}
-          {field(
-            "asrKey",
-            "语音 API 密钥",
-            config.hasAsrKey ? "已保存，留空保留" : "可与文本服务不同",
-            true,
+      {asrBackendDraft === "cloud" ? (
+        <div className="settings-section cloud-asr-settings">
+          <h3>
+            <Mic size={16} />
+            云端语音识别 <span>选择提供商与实时转写协议</span>
+          </h3>
+          <label>
+            语音提供商
+            <select
+              value={v.asrProvider || "openai"}
+              onChange={(e) => setV({ ...v, asrProvider: e.target.value })}
+            >
+              <option value="openai">OpenAI Realtime 兼容接口</option>
+              <option value="tingwu">阿里云 · 通义听悟</option>
+            </select>
+          </label>
+          {v.asrProvider === "tingwu" ? (
+            <>
+              <p className="help">
+                在听悟控制台开通实时记录并创建项目。填写项目 AppKey、AccessKey ID 和 AccessKey Secret；凭据由主进程加密保存。实时字幕与本地录音同时工作，听悟端点由应用配置。
+              </p>
+              {field("tingwuAppKey", "听悟项目 AppKey", "听悟控制台 → 我的项目")}
+              <div className="form-grid">
+                {field(
+                  "tingwuId",
+                  "AccessKey ID",
+                  config.hasTingwuId
+                    ? "已保存，留空保留"
+                    : "RAM 用户 AccessKey ID",
+                  true,
+                )}
+                {field(
+                  "tingwuSecret",
+                  "AccessKey Secret",
+                  config.hasTingwuSecret
+                    ? "已保存，留空保留"
+                    : "AccessKey Secret",
+                  true,
+                )}
+              </div>
+              <label>
+                识别语种
+                <select
+                  value={v.tingwuLanguage || "cn"}
+                  onChange={(e) =>
+                    setV({ ...v, tingwuLanguage: e.target.value })
+                  }
+                >
+                  <option value="cn">中文</option>
+                  <option value="fspk">中英文自由说</option>
+                  <option value="en">英文</option>
+                  <option value="yue">粤语</option>
+                  <option value="ja">日语</option>
+                </select>
+              </label>
+              <p className="help">
+                听悟只负责语音转写，笔记继续使用上方文本服务。补转写通过听悟按音频时长推流，无需 OSS；请先停止本课录音并保持应用打开。
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="help">
+                实时采用 OpenAI Realtime 转录事件协议，24 kHz PCM；HTTP 文本接口兼容不代表语音接口兼容。厂商专有协议需适配后使用。
+              </p>
+              {field("asrUrl", "实时 WSS 地址")}
+              <div className="form-grid">
+                {field("asrModel", "实时转录模型")}
+                {field(
+                  "asrKey",
+                  "语音 API 密钥",
+                  config.hasAsrKey ? "已保存，留空保留" : "可与文本服务不同",
+                  true,
+                )}
+              </div>
+              {field("fileUrl", "补转写 / 文件转写 HTTP 地址")}
+              {field("fileModel", "文件转写模型", "用于断线补传")}
+            </>
           )}
         </div>
-        {field("fileUrl", "补转写 / 文件转写 HTTP 地址")}
-        {field("fileModel", "文件转写模型", "用于断线补传")}
-      </div>
+      ) : (
+        <p className="help cloud-asr-note">
+          当前使用本机语音识别；云端语音提供商配置已保留，切换到云端后可继续编辑。
+        </p>
+      )}
       <div className="form-grid">
         <label>
           每课最大调用次数
@@ -2224,6 +2525,24 @@ function SettingsForm({
         保存 API 配置
       </button>
       {message && <p className="success-message">{message}</p>}
+      {asrBackendDraft === "cloud" && !!config.pendingTingwuTasks && (
+        <div className="consent-box tingwu-pending-box">
+          <p>
+            有 {config.pendingTingwuTasks} 个通义听悟云端任务尚未确认结束。停止录音与补转写后可重试结束；更换项目、凭据或删除课程前请先处理。
+          </p>
+          <button
+            className="secondary"
+            onClick={() =>
+              void onRun(async () => {
+                const result = await invoke("provider.tingwuCleanup");
+                setMessage("已结束 " + result.count + " 个听悟任务");
+              })
+            }
+          >
+            重试结束云端任务
+          </button>
+        </div>
+      )}
       {course && (
         <div className="consent-box">
           <h3>
@@ -2238,7 +2557,9 @@ function SettingsForm({
             ；语音：
             {configuredBackend === "local"
               ? "本机离线模型（音频不离开电脑）"
-              : safeHost(config.asrUrl, "未配置云端语音地址")}
+              : config.asrProvider === "tingwu"
+                ? "阿里云通义听悟 · 北京"
+                : safeHost(config.asrUrl, "未配置云端语音地址")}
             。范围仅包含本课转录、当前选定材料页和笔记上下文。
           </p>
           <label className="checkbox">
@@ -2262,6 +2583,22 @@ function SettingsForm({
             允许发送麦克风音频与本课待补转写分片
           </label>
           <div className="row">
+            {configuredBackend === "cloud" &&
+              config.asrProvider === "tingwu" && (
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void onRun(async () => {
+                      await invoke("provider.tingwuTest", { lessonId });
+                      setMessage(
+                        "听悟鉴权成功，测试任务已结束。开始录音可验证实时字幕。",
+                      );
+                    })
+                  }
+                >
+                  测试听悟鉴权（可能计费）
+                </button>
+              )}
             <button
               className="secondary"
               onClick={() =>

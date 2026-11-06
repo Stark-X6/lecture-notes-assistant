@@ -3,7 +3,13 @@ class PCMRecorder extends AudioWorkletProcessor {
     super();
     this.buffer = new Int16Array(2400);
     this.index = 0;
-    this.port.onmessage = () => this.flush();
+    this.port.onmessage = (event) => {
+      this.flush();
+      this.port.postMessage({
+        type: "flushed",
+        requestId: event.data.requestId,
+      });
+    };
   }
   flush() {
     if (this.index) {

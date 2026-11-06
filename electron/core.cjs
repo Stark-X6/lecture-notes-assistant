@@ -46,6 +46,9 @@ function initial() {
       textModel: "",
       asrUrl: "wss://api.openai.com/v1/realtime?intent=transcription",
       asrModel: "gpt-live-transcribe",
+      asrProvider: "openai",
+      tingwuAppKey: "",
+      tingwuLanguage: "cn",
       fileUrl: "https://api.openai.com/v1/audio/transcriptions",
       fileModel: "",
       version: 1,
@@ -92,6 +95,12 @@ class Store {
     this.root = root;
     this.db = db;
     this.s = state;
+    // Merge fields introduced by newer backends. New installations retain
+    // local ASR as the safe default; databases created by the older cloud
+    // branch (which had no asrBackend field) keep their HTTP cloud behavior.
+    const hadAsrBackend = Object.hasOwn(state.config || {}, "asrBackend");
+    this.s.config = { ...initial().config, ...state.config };
+    if (!hadAsrBackend) this.s.config.asrBackend = "cloud";
     this.onChange = () => {};
   }
   save() {
@@ -120,6 +129,14 @@ class Store {
     delete s.secrets;
     s.config.hasTextKey = !!this.s.secrets.text;
     s.config.hasAsrKey = !!this.s.secrets.asr;
+    s.config.hasTingwuId = !!this.s.secrets.tingwuId;
+    s.config.hasTingwuSecret = !!this.s.secrets.tingwuSecret;
+    s.config.pendingTingwuTasks = s.streams.filter(
+      (x) =>
+        x.provider === "tingwu" &&
+        x.cloudTaskId &&
+        !["stopped", "failed"].includes(x.cloudState),
+    ).length;
     for (const m of s.materials) delete m.path;
     for (const c of s.chunks) delete c.path;
     for (const t of s.tasks) delete t.input;
@@ -259,6 +276,10 @@ class Store {
       u.history.push({ revision: u.revision, text: u.text });
       u.text = text(body);
       u.revision++;
+      // Manual correction clears the local-ASR quality review marker while
+      // retaining the original transcript in history for auditability.
+      u.needsReview = false;
+      u.reviewReason = null;
       for (const t of s.topics.filter((t) =>
         t.sources.some((r) => r.targetId === uid),
       ))

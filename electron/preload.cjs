@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 const allowed = new Set([
   "snapshot",
   "localAsr.status",
+  "localAsr.select",
+  "localAsr.terms",
+  "audio.retranscribe",
   "localAsr.install",
   "localAsr.test",
   "localAsr.configure",
@@ -38,6 +41,8 @@ const allowed = new Set([
   "template.preview",
   "provider.configure",
   "provider.test",
+  "provider.tingwuCleanup",
+  "provider.tingwuTest",
   "recording.start",
   "recording.pause",
   "recording.resume",
