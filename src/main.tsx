@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   BookOpen,
@@ -35,10 +41,12 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { Markdown } from "./Markdown";
+import { TranscriptPanel } from "./TranscriptPanel";
 import { CourseSpace, LessonSetup } from "./CourseSpace";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "./style.css";
+import "./theme.css";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 declare global {
   interface Window {
@@ -116,7 +124,6 @@ function App() {
     [elapsed, setElapsed] = useState(0),
     [selected, setSelected] = useState<string[]>([]),
     [hint, setHint] = useState(""),
-    [search, setSearch] = useState(""),
     [focusSource, setFocusSource] = useState(""),
     [layout, setLayout] = useState({ left: 50, top: 54 });
   const flush = useRef<() => Promise<void>>(async () => {}),
@@ -151,6 +158,10 @@ function App() {
       }
     });
   }, [refresh]);
+  const originalUtterances = useMemo(
+    () => s?.utterances.filter((u: Obj) => u.lessonId === lid) || [],
+    [s?.utterances, lid],
+  );
   const course = s?.courses.find((c: Obj) => c.id === cid && !c.deleted),
     lessons =
       s?.lessons
@@ -390,10 +401,13 @@ function App() {
             <BookOpen size={21} />
           </div>
           <div>
-            听课笔记<span>LECTURE NOTES</span>
+            听课笔记<span>课堂记录与课程笔记</span>
           </div>
         </div>
-        <button className="nav-item active">
+        <button
+          className={"nav-item " + (view === "course" ? "active" : "")}
+          onClick={() => course && void run(async () => setView("course"))}
+        >
           <LayoutGrid size={18} />
           学习工作台
         </button>
@@ -430,7 +444,9 @@ function App() {
               {lessons.map((l: Obj, i: number) => (
                 <button
                   key={l.id}
-                  className={lid === l.id ? "chosen" : ""}
+                  className={
+                    view === "classroom" && lid === l.id ? "chosen" : ""
+                  }
                   onClick={() =>
                     void run(async () => {
                       setLid(l.id);
@@ -441,7 +457,12 @@ function App() {
                 >
                   <FileText size={15} />
                   <span>{l.name}</span>
-                  <small>{String(i + 1).padStart(2, "0")}</small>
+                  <small>
+                    {new Date(l.startedAt).toLocaleDateString("zh-CN", {
+                      month: "numeric",
+                      day: "numeric",
+                    })}
+                  </small>
                 </button>
               ))}
             </div>
@@ -469,7 +490,7 @@ function App() {
             我的课程
             <ChevronRight size={14} />
             <strong>{course?.name || "开始一段新的学习"}</strong>
-            {lesson && (
+            {lesson && view === "classroom" && (
               <>
                 <ChevronRight size={14} />
                 <span>{lesson.name}</span>
@@ -516,10 +537,17 @@ function App() {
         )}
         {course && (
           <div className="course-nav">
-            <button onClick={() => void run(async () => setView("course"))}>
+            <button
+              className={view === "course" ? "selected" : ""}
+              onClick={() => void run(async () => setView("course"))}
+            >
               课程空间
             </button>
-            <button disabled={!lesson} onClick={() => setView("classroom")}>
+            <button
+              className={view === "classroom" ? "selected" : ""}
+              disabled={!lesson}
+              onClick={() => setView("classroom")}
+            >
               当前课堂
             </button>
             {s.lessons.some((l: Obj) => l.recording !== "stopped") && (
@@ -603,7 +631,6 @@ function App() {
           <>
             <div className="workspace-heading">
               <div>
-                <span className="eyebrow">CLASSROOM WORKSPACE</span>
                 <h1>{lesson.name}</h1>
                 <p>
                   {new Date(lesson.startedAt).toLocaleDateString("zh-CN", {
@@ -617,6 +644,27 @@ function App() {
                 </p>
               </div>
               <div className="row">
+                <button
+                  className="primary organize-main"
+                  disabled={
+                    busy ||
+                    !utterances.some((u: Obj) => u.final) ||
+                    lesson.aiPaused ||
+                    recording ||
+                    paused
+                  }
+                  title={
+                    recording || paused
+                      ? "结束录音后整理整课"
+                      : "将本课转录与所选资料整理到笔记"
+                  }
+                  onClick={() =>
+                    void call("submission.create", { all: true, prompt: hint })
+                  }
+                >
+                  <FileText size={18} />
+                  整理课堂笔记
+                </button>
                 <button
                   className="secondary"
                   onClick={() => setModal("template")}
@@ -834,7 +882,7 @@ function App() {
                   kind="slides"
                   viewPage={viewPages.slides}
                   title="课程课件"
-                  subtitle="让讲解有迹可循"
+                  subtitle="页码用于阅读，AI 范围单独设置"
                   materials={materials}
                   range={lesson.context.slides}
                   onImport={() => void run(() => importPdf("slides"))}
@@ -853,7 +901,7 @@ function App() {
                   kind="book"
                   viewPage={viewPages.book}
                   title="参考教材"
-                  subtitle="补足理解的另一种视角"
+                  subtitle="仅使用选定教材页作为参考"
                   materials={materials}
                   range={lesson.context.book}
                   onImport={() => void run(() => importPdf("book"))}
@@ -872,7 +920,7 @@ function App() {
               <div
                 className="column"
                 style={{
-                  gridTemplateRows: `minmax(180px,${layout.top}fr) 8px minmax(160px,${100 - layout.top}fr)`,
+                  gridTemplateRows: `minmax(180px,${layout.top}fr) 8px minmax(280px,${100 - layout.top}fr)`,
                 }}
               >
                 <section className="panel note-panel">
@@ -940,8 +988,8 @@ function App() {
                   ) : (
                     <Empty
                       icon={<FileText size={30} />}
-                      title="你的知识，会在这里成形"
-                      description="提交一段课堂转录，或手动创建第一个主题。"
+                      title="尚无笔记主题"
+                      description="整理课堂笔记，或手动创建主题。"
                       action="新建主题"
                       onAction={() => setModal("topic")}
                     />
@@ -951,186 +999,36 @@ function App() {
                   className="resize horizontal"
                   onPointerDown={(e) => resize("top", e)}
                 />
-                <section className="panel transcript-panel">
-                  <div className="panel-header">
-                    <div className="panel-title">
-                      <span className="panel-symbol green">
-                        <Radio size={17} />
-                      </span>
-                      <h2>课堂转录</h2>
-                      <span className="count">{utterances.length}</span>
-                      {partial && <span className="listening">实时识别中</span>}
-                    </div>
-                    <div className="row gap6">
-                      <button
-                        className="text-button small"
-                        onClick={() => void run(() => importPdf("transcript"))}
-                      >
-                        <Upload size={13} />
-                        导入
-                      </button>
-                      <button
-                        className="icon-btn"
-                        title="手动输入转录"
-                        onClick={() => setModal("transcript")}
-                      >
-                        <Plus size={16} />
-                      </button>
-                    </div>
-                  </div>
-                  {utterances.length > 0 && (
-                    <div className="transcript-filter">
-                      <Search size={14} />
-                      <input
-                        placeholder="搜索课堂内容…"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                      />
-                      {selected.length > 0 && (
-                        <button
-                          className="text-button"
-                          onClick={() => setModal("assign")}
-                        >
-                          归入主题 ({selected.length})
-                        </button>
-                      )}
-                    </div>
+                <TranscriptPanel
+                  key={lid}
+                  captureActive={recording || paused}
+                  waiting={lesson.windows.some(
+                    (w: Obj) => w.state === "waiting",
                   )}
-                  <div className="transcript-scroll">
-                    {utterances
-                      .filter((u: Obj) => u.text.includes(search))
-                      .map((u: Obj, i: number) => (
-                        <div
-                          id={u.id}
-                          key={u.id}
-                          className={
-                            "utterance " +
-                            (selected.includes(u.id) ? "selected " : "") +
-                            (u.needsReview ? "needs-review " : "") +
-                            (focusSource === u.id ? "highlight" : "")
-                          }
-                        >
-                          <div className="utterance-meta">
-                            <input
-                              type="checkbox"
-                              aria-label={`选择转录 ${i + 1}`}
-                              checked={selected.includes(u.id)}
-                              onChange={(e) =>
-                                setSelected(
-                                  e.target.checked
-                                    ? [...selected, u.id]
-                                    : selected.filter((x) => x !== u.id),
-                                )
-                              }
-                            />
-                            <span>
-                              {u.startMs === null
-                                ? `第 ${i + 1} 段`
-                                : clock(u.startMs)}
-                            </span>
-                            <span className="source-tag">
-                              {u.topicId
-                                ? topics.find((t: Obj) => t.id === u.topicId)
-                                    ?.title
-                                : "待归类"}
-                            </span>
-                            <small>{stateOf(u)}</small>
-                            {u.needsReview && (
-                              <span
-                                className="review-flag"
-                                title={u.reviewReason || "识别结果需要回听核对"}
-                              >
-                                <AlertCircle size={12} />
-                                待回听核对
-                              </span>
-                            )}
-                            {u.startMs !== null && (
-                              <button
-                                className="icon-btn"
-                                title="回听此处（分片定位）"
-                                onClick={() =>
-                                  void run(() => playAudio(u), false)
-                                }
-                              >
-                                <Volume2 size={13} />
-                              </button>
-                            )}
-                            <button
-                              className="text-button small"
-                              onClick={() => setModal("revise:" + u.id)}
-                            >
-                              纠错
-                            </button>
-                          </div>
-                          {u.needsReview && (
-                            <div className="review-reason">
-                              <AlertCircle size={13} />
-                              {u.reviewReason ||
-                                "识别结果疑似复述课程术语，请回听核对"}
-                            </div>
-                          )}
-                          <p>{u.text}</p>
-                        </div>
-                      ))}
-                    {partial && (
-                      <div className="utterance partial">
-                        <div className="utterance-meta">
-                          <span className="dot green" />
-                          正在转写 · 未定稿
-                        </div>
-                        <p>
-                          {partial}
-                          <span className="cursor" />
-                        </p>
-                      </div>
-                    )}
-                    {!utterances.length && !partial && (
-                      <Empty
-                        icon={<Mic size={28} />}
-                        title="每一句讲解，都值得留住"
-                        description="开始录音，或导入 TXT / SRT 转录。"
-                        action="输入课堂内容"
-                        onAction={() => setModal("transcript")}
-                      />
-                    )}
-                  </div>
-                  <div className="submit-area">
-                    <input
-                      value={hint}
-                      onChange={(e) => setHint(e.target.value)}
-                      placeholder="给本段一个提示，例如：重点整理老师的推导过程"
-                    />
-                    <div className="submit-bottom">
-                      <span>
-                        {selected.length
-                          ? `已选 ${selected.length} 段`
-                          : `${utterances.filter((u: Obj) => stateOf(u) !== "已整理").length} 段待整理`}
-                        {lesson.windows.some(
-                          (w: Obj) => w.state === "waiting",
-                        ) && " · 等待转写补齐"}
-                      </span>
-                      <button
-                        className="primary compact"
-                        disabled={
-                          busy ||
-                          lesson.aiPaused ||
-                          !utterances.length ||
-                          lesson.mode === "auto"
-                        }
-                        onClick={() =>
-                          void call("submission.create", {
-                            prompt: hint,
-                            ...(selected.length ? { uids: selected } : {}),
-                          })
-                        }
-                      >
-                        <Sparkles size={14} />
-                        提交本段
-                        <ArrowUpRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </section>
+                  items={originalUtterances}
+                  topics={topics}
+                  selected={selected}
+                  onSelected={setSelected}
+                  onAssign={() => setModal("assign")}
+                  onImport={() => void run(() => importPdf("transcript"))}
+                  onManual={() => setModal("transcript")}
+                  onPlay={(u) => void run(() => playAudio(u), false)}
+                  onRevise={(u) => setModal("revise:" + u.id)}
+                  stateOf={stateOf}
+                  focusSource={focusSource}
+                  partial={partial}
+                  hint={hint}
+                  onHint={setHint}
+                  busy={busy}
+                  paused={!!lesson.aiPaused}
+                  automatic={lesson.mode === "auto"}
+                  onSubmit={() =>
+                    void call("submission.create", {
+                      prompt: hint,
+                      ...(selected.length ? { uids: selected } : {}),
+                    })
+                  }
+                />
               </div>
             </div>
             <footer className="statusbar">
@@ -1166,14 +1064,6 @@ function App() {
                   onClick={() => setModal("retranscribe")}
                 >
                   重新转写原录音
-                </button>
-                <span>·</span>
-                <button
-                  onClick={() =>
-                    void call("submission.create", { all: true, prompt: hint })
-                  }
-                >
-                  整课整理
                 </button>
                 <span>·</span>
                 <button onClick={() => setModal("tasks")}>
@@ -2001,13 +1891,11 @@ function MaterialPanel({
             icon={
               kind === "slides" ? <Layers size={30} /> : <BookOpen size={30} />
             }
-            title={
-              kind === "slides" ? "把课件放进课堂" : "多一份参考，多一层理解"
-            }
+            title={kind === "slides" ? "尚未选择课件" : "尚未选择教材"}
             description={
               kind === "slides"
-                ? "导入 PDF 课件，边听边看，手动关联当前页。"
-                : "教材不是必选项，你随时可以补充。"
+                ? "从课程已有资料中选择，或导入 PDF 课件。"
+                : "教材可选，也可以从课程资料库选择。"
             }
             action={kind === "slides" ? "导入课程课件" : "添加参考教材"}
             onAction={onImport}
@@ -2171,9 +2059,9 @@ function NoteEditor({
           <Markdown>{body}</Markdown>
         ) : (
           <div className="note-empty">
-            <span>01 / {topic.title}</span>
-            <h3>从一个想法开始。</h3>
-            <p>点击「编辑」写下笔记，或提交课堂转录生成第一份草稿。</p>
+            <span>{topic.title}</span>
+            <h3>这份笔记还没有内容</h3>
+            <p>点击顶部「整理课堂笔记」，或手动编辑。</p>
           </div>
         )}
         {topic.sources.length > 0 && (

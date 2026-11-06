@@ -686,7 +686,8 @@ export function CourseSpace({
     [noteId, setNoteId] = useState(""),
     [notename, setNotename] = useState(""),
     [confirm, setConfirm] = useState(""),
-    [deleteId, setDeleteId] = useState("");
+    [deleteId, setDeleteId] = useState(""),
+    [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
   const chats = s.conversations.filter((x: Obj) => x.courseId === course.id),
     chat = chats.find((x: Obj) => x.id === chatId) || chats[0],
     notes = s.notebooks.filter((x: Obj) => x.courseId === course.id),
@@ -732,6 +733,12 @@ export function CourseSpace({
           course.id) &&
       ["queued", "running", "failed"].includes(t.state),
   );
+  const pendingTasks = active.filter(
+    (t: Obj) => t.state === "queued" || t.state === "running",
+  ).length;
+  useEffect(() => {
+    if (pendingTasks > 0) setTaskHistoryOpen(true);
+  }, [pendingTasks]);
   async function importMaterial(kind: string) {
     const m = await invoke("material.import", { courseId: course.id, kind });
     if (m?.ext === ".pdf" && !m.pages.length) {
@@ -753,9 +760,17 @@ export function CourseSpace({
     <div className="course-space">
       <div className="workspace-heading">
         <div>
-          <span className="eyebrow">COURSE LEARNING SPACE</span>
           <h1>{course.name}</h1>
-          <p>资料、对话与笔记，跨课堂持续保存</p>
+          <p>
+            {s.materials.filter((m: Obj) => m.courseId === course.id).length}{" "}
+            份资料 <span> / </span>{" "}
+            {
+              s.lessons.filter(
+                (l: Obj) => l.courseId === course.id && !l.deleted,
+              ).length
+            }{" "}
+            次课堂 <span> / </span> {notes.length} 份笔记
+          </p>
         </div>
         <div className="row">
           <button onClick={onTemplate}>课程模板</button>
@@ -899,26 +914,29 @@ export function CourseSpace({
                 onChange={updateScope}
               />
             )}
-            {s.materials
-              .filter((m: Obj) => m.courseId === course.id)
-              .map((m: Obj) => (
-                <details key={m.id}>
-                  <summary>
-                    {m.name} · {m.pages.length} 页
-                  </summary>
-                  <p className="muted">浏览内容不改变处理范围。</p>
-                  <details>
-                    <summary>查看文本资料</summary>
-                    {m.pages.map((p: string, i: number) => (
-                      <details key={i}>
-                        <summary>第 {i + 1} 页</summary>
-                        <p>{p || "无文本；扫描页需先在外部 OCR"}</p>
-                      </details>
-                    ))}
+            <details className="source-library" open={!chat}>
+              <summary>资料原文与课件目录</summary>
+              {s.materials
+                .filter((m: Obj) => m.courseId === course.id)
+                .map((m: Obj) => (
+                  <details key={m.id}>
+                    <summary>
+                      {m.name} · {m.pages.length} 页
+                    </summary>
+                    <p className="muted">浏览内容不改变处理范围。</p>
+                    <details>
+                      <summary>查看文本资料</summary>
+                      {m.pages.map((p: string, i: number) => (
+                        <details key={i}>
+                          <summary>第 {i + 1} 页</summary>
+                          <p>{p || "无文本；扫描页需先在外部 OCR"}</p>
+                        </details>
+                      ))}
+                    </details>
+                    {m.kind === "slides" && <Outline m={m} onRun={onRun} />}
                   </details>
-                  {m.kind === "slides" && <Outline m={m} onRun={onRun} />}
-                </details>
-              ))}
+                ))}
+            </details>
           </section>
           <section className="course-card chat-column">
             <div className="row between">
@@ -938,6 +956,14 @@ export function CourseSpace({
                 新建对话
               </button>
             </div>
+            {!chat && (
+              <div className="chat-empty">
+                <h3>围绕课程资料提问</h3>
+                <p>
+                  新建一个对话，在左栏选择本次使用的资料。每个对话独立保存记录和草稿。
+                </p>
+              </div>
+            )}
             <div className="chat-tabs">
               {chats.map((c: Obj) => (
                 <button
@@ -972,6 +998,12 @@ export function CourseSpace({
                   }
                 />
                 <div className="chat-messages">
+                  {!chat.messages.length && (
+                    <div className="chat-empty">
+                      <h3>这个对话还没有消息</h3>
+                      <p>选择资料，然后在下方写下你的问题。</p>
+                    </div>
+                  )}
                   {chat.messages.map((m: Obj) => (
                     <article key={m.id} className={"message " + m.role}>
                       <small>{m.role === "user" ? "你" : "课程助手"}</small>
@@ -1049,42 +1081,60 @@ export function CourseSpace({
                 </button>
               </>
             )}
-            {active.map((t: Obj) => (
-              <div className="task-card" key={t.id}>
-                <b>
-                  {t.progress?.stage || "生成任务"} ·{" "}
-                  {t.state === "failed"
-                    ? "失败"
-                    : t.state === "running"
-                      ? "进行中"
-                      : "排队中"}
-                </b>
-                <p>{t.error}</p>
-                {t.state === "failed" ? (
-                  <button
-                    onClick={() =>
-                      void onRun(() => invoke("task.retry", { id: t.id }))
-                    }
-                  >
-                    重试未完成部分
-                  </button>
-                ) : (
-                  <button
-                    onClick={() =>
-                      void onRun(() => invoke("task.cancel", { id: t.id }))
-                    }
-                  >
-                    取消
-                  </button>
-                )}
-                {t.preview && (
-                  <details>
-                    <summary>未验证预览</summary>
-                    <Markdown>{t.preview}</Markdown>
-                  </details>
-                )}
-              </div>
-            ))}
+            {active.length > 0 && (
+              <details
+                className="course-task-history"
+                open={taskHistoryOpen}
+                onToggle={(event) =>
+                  setTaskHistoryOpen(event.currentTarget.open)
+                }
+              >
+                <summary>
+                  整理任务{" "}
+                  <span>
+                    {pendingTasks > 0
+                      ? `${pendingTasks} 个进行中`
+                      : `${active.length} 条失败记录`}
+                  </span>
+                </summary>
+                {active.map((t: Obj) => (
+                  <div className="task-card" key={t.id}>
+                    <b>
+                      {t.progress?.stage || "生成任务"} ·{" "}
+                      {t.state === "failed"
+                        ? "失败"
+                        : t.state === "running"
+                          ? "进行中"
+                          : "排队中"}
+                    </b>
+                    <p>{t.error}</p>
+                    {t.state === "failed" ? (
+                      <button
+                        onClick={() =>
+                          void onRun(() => invoke("task.retry", { id: t.id }))
+                        }
+                      >
+                        重试未完成部分
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          void onRun(() => invoke("task.cancel", { id: t.id }))
+                        }
+                      >
+                        取消
+                      </button>
+                    )}
+                    {t.preview && (
+                      <details>
+                        <summary>未验证预览</summary>
+                        <Markdown>{t.preview}</Markdown>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </details>
+            )}
           </section>
           <section className="course-card studio-column">
             <h2>笔记与学习资料</h2>

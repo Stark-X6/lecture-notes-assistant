@@ -124,13 +124,15 @@ const { _electron: electron, expect } = require("@playwright/test"),
       .getByRole("button", { name: "自动 · 课后整理", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "提交本段", exact: false })
+      .getByRole("button", { name: "整理待处理内容", exact: false })
       .isDisabled()
       .then((disabled) => assert.ok(disabled));
     await page.getByRole("button", { name: "折叠课件", exact: true }).click();
     assert.equal(await page.locator(".material-slides").isVisible(), false);
     await page.getByRole("button", { name: "展开课件", exact: true }).click();
-    await page.getByRole("button", { name: "整课整理", exact: true }).click();
+    await page
+      .getByRole("button", { name: "整理课堂笔记", exact: true })
+      .click();
     await page.waitForFunction(
       async () =>
         (await window.desktop.invoke("snapshot")).candidates.length > 0,

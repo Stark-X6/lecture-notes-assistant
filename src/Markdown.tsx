@@ -56,7 +56,7 @@ export function Markdown({ children }: { children: string }) {
           img: ManagedImage,
         }}
       >
-        {children}
+        {children.replaceAll("<!-- generated-sources -->", "")}
       </ReactMarkdown>
     </div>
   );
