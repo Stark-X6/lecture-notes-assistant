@@ -1,10 +1,35 @@
-# 听课笔记助手 Windows 桌面版
+# 听课笔记助手 Windows 与 macOS 桌面版
 
 这是依据《听课笔记助手系统设计书 v1.0》和本次设计评审意见实现的桌面试用版。课程、材料、音频、转录和笔记保存在本机；外部 AI 通过用户配置的 API 调用。未提供真实供应商账户与密钥，不能将模拟测试视为真实模型内容、费用或延迟验收。
 
 当前版本 **0.1.1**，`通义听悟` 分支已实现阿里云通义听悟实时转写、临时字幕、正式转录、暂停恢复与本地音频补转写。
 
-## 从 Gitee 获取并运行
+## macOS 安装与运行
+
+支持在 Mac 上开发与打包；本次适配以 Apple Silicon（arm64）验证。需要 Node.js 22.12 及以上。
+
+```bash
+npm ci
+npx install-electron --no
+npm start
+```
+
+第一次点击“开始录音”时允许麦克风权限。若曾拒绝，在 **系统设置 → 隐私与安全性 → 麦克风** 中允许“听课笔记助手”（开发运行时通常为 Electron），然后重新打开应用。使用系统默认输入设备；系统回环收音仍不属于此版范围。
+
+```bash
+npm run test:mac       # 权限与 Dock 激活回归，使用模拟音频
+npm run pack:mac       # 生成本机架构的 .app
+npm run dist:mac       # 生成本机架构的 DMG 和 ZIP
+npm run dist:mac:x64   # 为 Intel Mac 构建，需另行在 Intel 设备验证
+```
+
+Apple Silicon 的应用目录为 `release/mac-arm64/听课笔记助手.app`，安装镜像为 `release/LectureNotes-0.1.1-mac-arm64.dmg`。DMG 打开后将应用拖到“应用程序”文件夹再启动。当前构建使用本机 ad-hoc 签名，未进行 Apple 公证；对外正式分发时应配置 Developer ID 签名和公证。
+
+关闭最后一个窗口后，Mac 应用保留在 Dock，可再次点击打开；使用 **⌘Q** 退出。录音中关闭或退出仍会按原流程提示或保存并结束听悟云端任务。默认数据位于 `~/Library/Application Support/<应用名称>/library`；macOS 凭据由 Keychain 保护，其他机器或 Windows 的密文不能直接解密，应重新填写 API 凭据。
+
+通义听悟的 AppKey、AK、课程授权和补转写步骤与 Windows 相同，见下文。更多 Mac 验证和打包说明见 [macOS 适配说明](docs/macos-support.md)。
+
+## 从 Gitee 获取并运行（Windows）
 
 需要 Windows 10/11 x64、Git 和 Node.js 22.12 及以上。克隆本分支后在 PowerShell 中执行：
 
@@ -41,7 +66,7 @@ npm start
 7. **生成笔记**：需要 AI 笔记时，再配置“文本生成”的 Chat Completions 兼容 HTTPS 地址、模型名称及文本 API 密钥，保存配置并重新保存课程的音频与文本授权。半自动点击 **提交本段**，或切换 **自动 · 60秒**。听悟只负责转写，笔记由独立文本服务生成。
 8. **暂停、结束与补转写**：暂停会结束当前听悟任务，继续录音时创建新任务。断线时音频仍保存在本机；停止本课录音后点击底部 **补转写**，按原音频时长补发未确认范围。补转写无需 OSS，期间请保持应用打开。
 
-密钥只在应用设置中填写，由 Windows 账户加密保存。云端任务结束失败时，进入设置点击 **重试结束云端任务**。更换听悟项目、凭据或删除课程前，先处理遗留任务。完整说明见 [听悟接入与使用说明](docs/tingwu-integration.md)。
+密钥只在应用设置中填写，由当前操作系统的凭据机制加密保存。云端任务结束失败时，进入设置点击 **重试结束云端任务**。更换听悟项目、凭据或删除课程前，先处理遗留任务。完整说明见 [听悟接入与使用说明](docs/tingwu-integration.md)。
 
 常见情况：
 
@@ -54,7 +79,7 @@ npm start
 | 断网后缺少转录                | 停止本课录音后点击“补转写”；处理速度约为音频原速                                 |
 | `npm ci` 或 Electron 下载失败 | 检查 npm/GitHub 下载网络，恢复后重新执行安装命令                                 |
 
-## 安装与启动
+## Windows 安装与启动
 
 安装包位于 `release/LectureNotes-Setup-0.1.1.exe`，解包版位于 `release/win-unpacked/听课笔记助手.exe`。解包版必须保留整个目录。构建未使用商业代码签名证书。
 
@@ -87,7 +112,7 @@ OpenAI 配置中的地址是协议示例，不代表已经为你选定供应商�
 
 保存配置后，在同一页面为当前课程单独授权“转录/选定材料/笔记”和“音频”。切换任何提供商配置会撤销旧授权并取消在途任务。“发送测试文本”调用文本服务；“测试听悟鉴权”创建并结束听悟测试任务，均可能产生调用费用。价格未接入，界面按调用次数及输出 token 上限控制请求，**不承诺金额上限**；实时语音费用应在供应商后台设置预算。
 
-密钥使用 Electron safeStorage，在 Windows 上由当前系统账户保护。数据库与原始音频本身没有全盘加密。只有受控主进程读取密钥，界面快照不含密钥。
+密钥使用 Electron safeStorage，在 Windows 上使用当前账户保护，在 macOS 上使用 Keychain。数据库与原始音频本身没有全盘加密。只有受控主进程读取密钥，界面快照不含密钥。
 
 ## 使用流程
 
@@ -116,8 +141,8 @@ npm test                 # 核心规则、持久化、API 协议与故障注入�
 npm run build            # TypeScript 检查与界面构建
 node tests/smoke.cjs      # Electron 窗口端到端测试，使用模拟麦克风
 npm run test:tingwu       # 听悟设置、加密凭据及模拟推流桌面测试，不调用云端
-npm run pack             # Windows 解包目录
-npm run dist             # Windows NSIS 安装包
+npm run pack:win         # Windows 解包目录
+npm run dist:win         # Windows NSIS 安装包
 ```
 
 端到端测试覆盖创建示例课、模拟整理、人工编辑保护、候选对照、PDF 导入与索引、模板起草预览、来源导出，以及录音暂停、继续、停止与尾部分片。测试数据及截图分别保存在 `.test-data/` 和 `artifacts/`。

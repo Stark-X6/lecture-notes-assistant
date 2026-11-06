@@ -1,5 +1,6 @@
 // Isolated desktop integration test. All cloud traffic is replaced before recording.
 const { _electron: electron } = require("@playwright/test");
+const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"),
   path = require("node:path");
@@ -19,6 +20,7 @@ const fs = require("node:fs"),
     timeout: 30000,
   });
   try {
+    await fakeMicrophonePermission(application);
     const page = await application.firstWindow(),
       errors = [];
     page.on("pageerror", (e) => errors.push(e.message));

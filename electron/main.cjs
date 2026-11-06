@@ -4,6 +4,7 @@ const {
   ipcMain,
   dialog,
   safeStorage,
+  systemPreferences,
   session,
   shell,
 } = require("electron");
@@ -22,6 +23,7 @@ const {
   DEFAULT_TEMPLATE,
 } = require("./core.cjs");
 const { Scheduler, endpoint, generate } = require("./provider.cjs");
+const { ensureMicrophonePermission } = require("./platform.cjs");
 const { LiveASR } = require("./asr.cjs");
 const { TingwuASR } = require("./tingwu-asr.cjs");
 const { TingwuAPI } = require("./tingwu-api.cjs");
@@ -32,6 +34,7 @@ let store,
   record = null,
   quitting = false,
   broadcastTimer;
+let recordingStartVersion = 0;
 let recordingBusy = false,
   stoppingRecording = null,
   tingwuTestRun = null,
@@ -209,7 +212,24 @@ function flushAudio() {
 async function startRecording(lid) {
   check(!record, "已有录音正在进行");
   check(!backfills.has(lid), "请等待本课补转写结束");
+  store.lesson(lid);
+  const owner = win,
+    startVersion = recordingStartVersion;
+  await ensureMicrophonePermission(
+    systemPreferences,
+    app.isPackaged ? app.getName() : "Electron（开发运行）",
+  );
+  check(
+    startVersion === recordingStartVersion &&
+      !shutdownPending &&
+      !quitting &&
+      win === owner &&
+      owner &&
+      !owner.isDestroyed(),
+    "录音启动已取消，请重新打开课堂后再试",
+  );
   const l = store.lesson(lid);
+  check(!backfills.has(lid), "请等待本课补转写结束");
   const worker = new Worker(path.join(__dirname, "audio-worker.cjs"), {
     workerData: {
       dir: path.join(root, "lessons", lid, "audio"),
@@ -237,6 +257,8 @@ async function startRecording(lid) {
     window: recorder,
     worker,
     ms: l.captureMs,
+    originMs: l.captureMs,
+    samples: 0,
     asr: createASR(lid),
   };
   worker.on("message", (m) => {
@@ -1022,7 +1044,10 @@ const routes = {
     store.tx(() => (c.layout = a.layout));
   },
   "course.delete": async (a) => {
-    check(!tingwuTestRun && !configuring, "请等待 API 操作结束，再删除课程");
+    check(
+      !tingwuTestRun && !configuring && !recordingBusy,
+      "请等待录音或 API 操作结束，再删除课程",
+    );
     const c = store.course(a.id);
     check(a.confirm === c.name, "请输入完整课程名称确认删除");
     if (record && store.lesson(record.lid).courseId === c.id)
@@ -1128,7 +1153,8 @@ ipcMain.on("capture:frame", (event, pcm) => {
   const bytes = Buffer.from(pcm);
   if (bytes.length > 10000 || bytes.length % 2) return;
   const start = record.ms;
-  record.ms += bytes.length / 48;
+  record.samples += bytes.length / 2;
+  record.ms = record.originMs + Math.round(record.samples / 24);
   record.worker.postMessage({ type: "frame", pcm: bytes });
   record.asr.frame(bytes, start, record.ms);
   emit({ type: "clock", lessonId: record.lid, ms: record.ms });
@@ -1158,6 +1184,71 @@ ipcMain.handle("app:invoke", async (event, method, args) => {
     };
   }
 });
+let openingWindow = null;
+function showMainWindow() {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return Promise.resolve(win);
+  }
+  if (!openingWindow) {
+    openingWindow = createMainWindow().finally(() => {
+      openingWindow = null;
+    });
+  }
+  return openingWindow;
+}
+async function createMainWindow() {
+  win = new BrowserWindow({
+    width: 1500,
+    height: 970,
+    minWidth: 1050,
+    minHeight: 720,
+    title: "听课笔记助手",
+    backgroundColor: "#f6f7fb",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("will-navigate", (e) => e.preventDefault());
+  await win.loadFile(path.join(__dirname, "../dist/index.html"));
+  win.on("close", (e) => {
+    if (recordingBusy && !record) recordingStartVersion++;
+    if (record && !quitting) {
+      e.preventDefault();
+      dialog
+        .showMessageBox(win, {
+          type: "question",
+          message: "正在录音",
+          detail: "结束并保存录音后关闭，或继续录音。",
+          buttons: ["继续录音", "结束并退出"],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then(async (r) => {
+          if (r.response === 1) {
+            try {
+              await stopRecording();
+              quitting = true;
+              app.quit();
+            } catch (err) {
+              emit({ type: "warning", message: err.message });
+            }
+          }
+        });
+    }
+  });
+  const current = win;
+  current.on("closed", () => {
+    if (win === current) win = null;
+  });
+  return current;
+}
 app
   .whenReady()
   .then(async () => {
@@ -1176,48 +1267,7 @@ app
       (wc, permission) =>
         permission === "media" && wc === record?.window.webContents,
     );
-    win = new BrowserWindow({
-      width: 1500,
-      height: 970,
-      minWidth: 1050,
-      minHeight: 720,
-      title: "听课笔记助手",
-      backgroundColor: "#f6f7fb",
-      webPreferences: {
-        preload: path.join(__dirname, "preload.cjs"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.webContents.on("will-navigate", (e) => e.preventDefault());
-    await win.loadFile(path.join(__dirname, "../dist/index.html"));
-    win.on("close", (e) => {
-      if (record && !quitting) {
-        e.preventDefault();
-        dialog
-          .showMessageBox(win, {
-            type: "question",
-            message: "正在录音",
-            detail: "结束并保存录音后关闭，或继续录音。",
-            buttons: ["继续录音", "结束并退出"],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          .then(async (r) => {
-            if (r.response === 1) {
-              try {
-                await stopRecording();
-                quitting = true;
-                app.quit();
-              } catch (err) {
-                emit({ type: "warning", message: err.message });
-              }
-            }
-          });
-      }
-    });
+    await showMainWindow();
     setInterval(() => {
       for (const l of store.s.lessons.filter(
         (l) => !store.s.courses.find((c) => c.id === l.courseId)?.deleted,
@@ -1229,12 +1279,20 @@ app
     dialog.showErrorBox("启动失败", e.message);
     app.quit();
   });
-app.on("second-instance", () => {
-  win?.show();
-  win?.focus();
+function activateWindow() {
+  if (store && !shutdownPending && !quitting) {
+    void showMainWindow().catch((error) => {
+      dialog.showErrorBox("打开窗口失败", error.message);
+    });
+  }
+}
+app.on("second-instance", activateWindow);
+app.on("activate", activateWindow);
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
-app.on("window-all-closed", () => app.quit());
 app.on("before-quit", (event) => {
+  recordingStartVersion++;
   if (!shutdownReady && (record || backfillTasks.size || tingwuTestRun)) {
     event.preventDefault();
     if (shutdownPending) return;

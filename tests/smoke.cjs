@@ -1,4 +1,5 @@
 const { _electron: electron } = require("@playwright/test");
+const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
 const fs = require("node:fs"),
   path = require("node:path");
 (async () => {
@@ -17,6 +18,7 @@ const fs = require("node:fs"),
     timeout: 30000,
   });
   try {
+    await fakeMicrophonePermission(app);
     const page = await app.firstWindow();
     await page.waitForSelector(".onboarding");
     const errors = [];
