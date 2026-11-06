@@ -2359,8 +2359,8 @@ function SettingsForm({
   return (
     <div className="settings-form">
       <p className="modal-description">
-        文本和语音可使用不同服务商。API 密钥由 Windows
-        账户加密后保存在本机，不会返回界面。填写完整端点地址；更换文本配置后需要重新授权课程。
+        文本和语音可使用不同服务商。API 密钥由系统
+        加密存储保存在本机，不会返回界面。填写完整端点地址；更换文本配置后需要重新授权课程。
       </p>
       <div className="settings-section local-asr-settings">
         <h3>

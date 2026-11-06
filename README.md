@@ -1,4 +1,4 @@
-# 听课笔记助手 · Windows 课程空间版
+# 听课笔记助手 · Windows / macOS 课程空间版
 
 **v0.3.1**，基于 `lecture-notes-local-asr-v0.2.0` 分支的 `460cad1`，按[需求变更清单 v0.3](docs/requirements-v0.3.md)实现。保留本地ASR与通义听悟，新增课程共享笔记、多对话、预习复习，自动模式改为课后完整整理。
 
@@ -14,7 +14,7 @@
 
 ## API 与本地识别
 
-设置中填写文本生成的Chat Completions兼容HTTPS地址、模型和密钥；每门课程显式授权后才发送选定资料。密钥保存在Windows加密存储中，不上传Git。模拟模式明确标注，不能用于内容质量验收。
+设置中填写文本生成的Chat Completions兼容HTTPS地址、模型和密钥；每门课程显式授权后才发送选定资料。密钥通过系统加密存储保存在本机（Windows 账户保护 / macOS 钥匙串），不上传Git。模拟模式明确标注，不能用于内容质量验收。
 
 本地ASR可选SenseVoice和Qwen3-ASR，首次从设置下载模型；无需语音API密钥。关闭文本AI不影响本地识别。模型不随安装包分发，支持在设置查看下载状态和运行测试，详见[本地识别说明](docs/local-asr.md)。本地按12—20秒语段处理，不能宣称5秒实时字幕。
 
@@ -24,9 +24,9 @@
 
 ## 运行与构建
 
-Windows 10/11 x64，Node.js 22.12或更新版本：
+同一套源码支持 Windows 10/11 x64 与 macOS。macOS 已在 Apple Silicon 上验证；Intel 构建命令已提供，尚未实机验证。开发需 Node.js 22.12 或更新版本：
 
-```powershell
+```bash
 npm ci
 node node_modules/electron/install.js
 npm start
@@ -37,7 +37,17 @@ npm run test:audio
 npm run pack
 ```
 
-`npm run pack`生成 `release-v0.3.1/win-unpacked/听课笔记助手.exe`。免安装运行必须保留整个win-unpacked目录。`npm run dist`尝试生成NSIS安装器；需要对应Windows构建工具，未进行商业签名。可执行 `python scripts/package-delivery.py`生成含源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
+`npm run pack`、`npm run dist`默认构建当前系统版本。显式平台命令如下；正式构建建议在对应系统运行：
+
+| 平台 | 免安装应用 | 安装/分发包 |
+| --- | --- | --- |
+| Windows x64 | `npm run pack:win` | `npm run dist:win`（NSIS） |
+| macOS 当前架构 | `npm run pack:mac` | `npm run dist:mac`（DMG + ZIP） |
+| macOS Intel | — | `npm run dist:mac:x64`（待实机验证） |
+
+Windows 输出 `release-v0.3.1/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.3.1/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
+
+Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
 
 ## 文档与验证
 

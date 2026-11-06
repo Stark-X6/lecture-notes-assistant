@@ -7,14 +7,14 @@ function routes(context) {
   return {
     "lesson.update": (a) => get().store.updateLesson(a.lessonId, a),
     "lesson.delete": async (a) => {
-      const { store, scheduler, backfills, record } = get(),
+      const { store, scheduler, backfills, record, recordingBusy } = get(),
         l = store.lesson(a.lessonId);
       check(
         a.confirm === l.name,
         "请输入课堂标题确认：课堂将移入回收状态；引用及共享资源保留",
       );
       check(
-        record?.lid !== l.id && !backfills.has(l.id),
+        !recordingBusy && record?.lid !== l.id && !backfills.has(l.id),
         "请结束录音及转写后删除",
       );
       for (const t of store.s.tasks.filter(

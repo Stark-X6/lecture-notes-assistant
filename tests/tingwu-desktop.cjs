@@ -1,3 +1,5 @@
+const { fakeCredentialStorage } = require("./helpers/macos-vault.cjs");
+const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
 // Isolated desktop integration test. All cloud traffic is replaced before recording.
 const { _electron: electron } = require("@playwright/test");
 const assert = require("node:assert/strict");
@@ -22,6 +24,8 @@ const fs = require("node:fs"),
   });
   const ownedPid = await application.evaluate(() => process.pid);
   try {
+    await fakeMicrophonePermission(application);
+    await fakeCredentialStorage(application);
     const page = await application.firstWindow(),
       errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -178,7 +182,10 @@ const fs = require("node:fs"),
     );
     assert.equal(streams.length, 2);
     assert.ok(streams.every((s) => s.cloudState === "stopped"));
-    assert.ok(Math.abs(streams[1].originMs - paused.lessons[0].captureMs) <= 1, "采样时钟与WAV毫秒四舍五入差异应在1ms内");
+    assert.ok(
+      Math.abs(streams[1].originMs - paused.lessons[0].captureMs) <= 1,
+      "采样时钟与WAV毫秒四舍五入差异应在1ms内",
+    );
     assert.ok(utterances.length >= 4);
     assert.equal(
       new Set(utterances.map((u) => u.streamId + u.providerSentenceId)).size,

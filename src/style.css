@@ -1,5 +1,5 @@
 :root {
-  font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: #263047;
   background: #f5f6fa;
   font-synthesis: none;
@@ -139,7 +139,7 @@
   font-weight: normal;
 }
 .course-note textarea {
-  font-family: Consolas, monospace;
+  font-family: SFMono-Regular, Menlo, Consolas, monospace;
 }
 .lesson-record {
   display: flex;
@@ -1152,7 +1152,7 @@ main {
   margin: 0 2px;
 }
 .utterance-meta > span:nth-of-type(1) {
-  font-family: Consolas, monospace;
+  font-family: SFMono-Regular, Menlo, Consolas, monospace;
   color: #9ba5b9;
   letter-spacing: 0.3px;
 }

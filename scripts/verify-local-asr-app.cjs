@@ -1,13 +1,15 @@
+const {fakeMicrophonePermission}=require("../tests/helpers/macos-permission.cjs");
 const {_electron}=require('@playwright/test');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
 (async()=>{
- const qa=path.resolve('..','.qa'), data=path.join(qa,'asr-integrated-'+Date.now());
+ const qa=process.env.LECTURE_TEST_MODEL_ROOT || path.resolve('.test-data','local-asr-models'), data=path.resolve('.test-data','asr-integrated-'+Date.now());
  const sample=path.join(qa,'sensevoice-small-int8','test_wavs','zh.wav');
  const executablePath=process.env.LECTURE_EXECUTABLE;
  const app=await _electron.launch({...(executablePath?{executablePath}:{}),args:[...(executablePath?[]:['.']),'--no-sandbox','--user-data-dir='+path.join(data,'runtime'),'--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--use-file-for-fake-audio-capture='+sample],env:{...process.env,LECTURE_DATA_DIR:data,LECTURE_MODEL_DIR:qa},timeout:30000});
  const electronPid=await app.evaluate(()=>process.pid);
  const warnings=[];
  try{
+  await fakeMicrophonePermission(app);
   const page=await app.firstWindow(); await page.waitForFunction(()=>!!window.desktop);
   const invoke=(method,args={})=>page.evaluate(({method,args})=>window.desktop.invoke(method,args),{method,args});
   await page.evaluate(()=>window.desktop.subscribe(e=>{if(e.type==='warning')console.warn(e.message)}));

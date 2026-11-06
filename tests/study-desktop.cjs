@@ -1,4 +1,4 @@
-const { _electron: electron } = require("@playwright/test"),
+const { _electron: electron, expect } = require("@playwright/test"),
   assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path");
@@ -71,12 +71,9 @@ const { _electron: electron } = require("@playwright/test"),
     await page.waitForSelector(".message.assistant");
     await page.getByLabel("课程问题").fill("保留未发送草稿");
     await page.getByRole("button", { name: "新建对话", exact: true }).click();
-    assert.equal(await page.getByLabel("课程问题").inputValue(), "");
+    await expect(page.getByLabel("课程问题")).toHaveValue("");
     await page.getByRole("button", { name: "新对话 1", exact: true }).click();
-    assert.equal(
-      await page.getByLabel("课程问题").inputValue(),
-      "保留未发送草稿",
-    );
+    await expect(page.getByLabel("课程问题")).toHaveValue("保留未发送草稿");
     await page
       .getByRole("button", { name: "生成预习提纲", exact: true })
       .click();

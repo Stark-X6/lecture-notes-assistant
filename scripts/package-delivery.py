@@ -13,9 +13,9 @@ target = out / (name + '.zip')
 if target.exists():
     target = out / (name + '_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + '.zip')
 entries = []
-for folder in ['src', 'electron', 'tests', 'docs', 'scripts']:
+for folder in ['src', 'electron', 'tests', 'docs', 'scripts', 'build']:
     for file in sorted((root / folder).rglob('*')):
-        if file.is_file() and file.suffix in ['.tsx','.ts','.css','.cjs','.mjs','.js','.html','.md','.py']:
+        if file.is_file() and file.suffix in ['.tsx','.ts','.css','.cjs','.mjs','.js','.html','.md','.py','.plist']:
             if file.is_symlink(): raise RuntimeError('Unexpected symbolic link')
             entries.append((file, file.relative_to(root).as_posix()))
 for filename in ['.gitignore','index.html','package.json','package-lock.json','tsconfig.json','vite.config.mjs','README.md']:
