@@ -23,7 +23,7 @@ Node.js >=22.12.0。`npm ci` 后，必要时执行 `node node_modules/electron/i
 | npm run pack:mac / npm run dist:mac | 当前 Mac 架构应用目录 / DMG 和 ZIP |
 | npm run dist:mac:x64 | Intel Mac 包，待实机验证 |
 
-默认输出目录为 release-v0.3.2。Apple Silicon 应用路径为 mac-arm64/听课笔记助手.app；DMG 名称含 mac-arm64，Windows 安装器继续使用 LectureNotes-Setup-0.3.2.exe。请在对应系统构建正式分发包。
+默认输出目录为 release-v0.3.3。Apple Silicon 应用路径为 mac-arm64/听课笔记助手.app；DMG 名称含 mac-arm64，Windows 安装器继续使用 LectureNotes-Setup-0.3.3.exe。请在对应系统构建正式分发包。
 
 Mac 首次录音应在系统弹窗中允许麦克风访问；已拒绝则在“系统设置 → 隐私与安全性 → 麦克风”打开权限并重新启动。开发运行的权限主体为 Electron。API 密钥继续使用 Electron safeStorage，不提供明文回退；真实钥匙串不可用时拒绝保存密钥。本地临时签名版本未公证，不能当作已完成公开发行签名的版本。
 

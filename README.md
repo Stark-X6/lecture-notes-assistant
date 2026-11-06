@@ -1,6 +1,6 @@
 # 听课笔记助手 · Windows / macOS 课程空间版
 
-**v0.3.2**，修复 DeepSeek 结构化输出与截断识别（见[修复说明](docs/release-v0.3.2.md)）。课程空间功能基于 `lecture-notes-local-asr-v0.2.0` 分支的 `460cad1`，按[需求变更清单 v0.3](docs/requirements-v0.3.md)实现。保留本地ASR与通义听悟，新增课程共享笔记、多对话、预习复习，自动模式改为课后完整整理。
+**v0.3.3**，支持 256–393216 的单次输出上限与 DeepSeek 思考开关（见[更新说明](docs/release-v0.3.3.md)），保留 v0.3.2 的结构化输出和截断识别修复。课程空间功能基于 `lecture-notes-local-asr-v0.2.0` 分支的 `460cad1`，按[需求变更清单 v0.3](docs/requirements-v0.3.md)实现。保留本地ASR与通义听悟，新增课程共享笔记、多对话、预习复习，自动模式改为课后完整整理。
 
 ## 使用
 
@@ -45,7 +45,7 @@ npm run pack
 | macOS 当前架构 | `npm run pack:mac` | `npm run dist:mac`（DMG + ZIP） |
 | macOS Intel | — | `npm run dist:mac:x64`（待实机验证） |
 
-Windows 输出 `release-v0.3.2/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.3.2/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
+Windows 输出 `release-v0.3.3/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.3.3/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
 
 Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
 
@@ -55,6 +55,6 @@ Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档�
 - [C01—C07 / G01—G12逐项实现及限制](docs/release-v0.3.1.md)
 - [验收记录](docs/acceptance.md)
 
-46项自动测试、生产构建、原课堂桌面流程和新课程空间流程通过。加速90分钟等效PCM写盘及ENOSPC注入通过；真实麦克风90分钟、物理设备移除、真实供应商模型的事实质量、账单与时延尚未验收。F11教材骨架切换、F12 AI找页、F13板书、F15卡片测验保留为后续扩展。
+58项自动测试、生产构建、原课堂桌面流程和新课程空间流程通过。加速90分钟等效PCM写盘及ENOSPC注入通过；真实麦克风90分钟、物理设备移除、真实供应商模型的事实质量、账单与时延尚未验收。F11教材骨架切换、F12 AI找页、F13板书、F15卡片测验保留为后续扩展。
 
 升级前数据库自动备份为app.pre-v03.db，旧笔记内容/版本/课堂关联保留。单次课堂删除为软删除，历史来源和共享笔记保留；删除整门课程仍需输入课程名确认。更多迁移和回退说明见发布说明。

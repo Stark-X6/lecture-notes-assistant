@@ -23,6 +23,10 @@ const {
   DEFAULT_TEMPLATE,
 } = require("./core.cjs");
 const { Scheduler, endpoint, generate } = require("./provider.cjs");
+const {
+  MIN_OUTPUT_TOKENS,
+  MAX_OUTPUT_TOKENS,
+} = require("./generation-limits.cjs");
 const { ensureMicrophonePermission } = require("./platform.cjs");
 const { LiveASR } = require("./asr.cjs");
 const { LocalASR } = require("./local-asr.cjs");
@@ -1344,8 +1348,13 @@ const routes = {
       );
       check(
         Number.isInteger(a.maxOutput) &&
-          a.maxOutput >= 256 &&
-          a.maxOutput <= 16000,
+          a.maxOutput >= MIN_OUTPUT_TOKENS &&
+          a.maxOutput <= MAX_OUTPUT_TOKENS,
+        `单次最大输出 tokens 必须为 ${MIN_OUTPUT_TOKENS}–${MAX_OUTPUT_TOKENS} 的整数`,
+      );
+      check(
+        a.textThinking == null || typeof a.textThinking === "boolean",
+        "思考模式必须为开启或关闭",
       );
       for (const k of ["textModel", "asrModel", "fileModel", "policy"])
         text(a[k], 2000);
@@ -1381,6 +1390,7 @@ const routes = {
           localAsrModel: s.config.localAsrModel || "sensevoice",
           textUrl: a.textUrl,
           textModel: a.textModel,
+          textThinking: a.textThinking === true,
           asrUrl: a.asrUrl,
           asrModel: a.asrModel,
           asrProvider,

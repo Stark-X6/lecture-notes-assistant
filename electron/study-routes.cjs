@@ -2,6 +2,7 @@ const fs = require("node:fs"),
   path = require("node:path");
 const { id, clone, check, text, atomicWrite } = require("./core.cjs");
 const attachment = require("./attachments.cjs");
+const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
 function routes(context) {
   const get = () => context();
   return {
@@ -153,7 +154,7 @@ function routes(context) {
       return store.tx(() => {
         item.history ||= [];
         item.history.push({ version: item.version, body: item.body });
-        item.body = text(a.body);
+        item.body = text(a.body, MAX_NOTE_CHARS);
         item.version++;
       });
     },

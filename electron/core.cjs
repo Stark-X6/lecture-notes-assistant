@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID, createHash } = require("node:crypto");
 const initSql = require("sql.js");
+const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
 const id = () => randomUUID();
 const hash = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
@@ -45,6 +46,7 @@ function initial() {
       asrBackend: "local",
       textUrl: "https://api.openai.com/v1/chat/completions",
       textModel: "",
+      textThinking: false,
       asrUrl: "wss://api.openai.com/v1/realtime?intent=transcription",
       asrModel: "gpt-live-transcribe",
       asrProvider: "openai",
@@ -254,7 +256,7 @@ class Store {
     this.course(t.courseId);
     if (t.version !== version)
       fail("VERSION_CONFLICT", "笔记已变化，请重新加载后保存");
-    text(body);
+    text(body, MAX_NOTE_CHARS);
     return this.tx((s) => {
       s.revisions.push({
         id: id(),
@@ -745,7 +747,7 @@ function validateResult(r, input) {
         typeof b.title === "string" &&
         typeof b.content_md === "string" &&
         b.content_md.length > 0 &&
-        b.content_md.length < 60000,
+        b.content_md.length <= MAX_NOTE_CHARS,
       "模型笔记块无效",
     );
     check(!seen.has(b.topic_id), "同一主题重复更新");

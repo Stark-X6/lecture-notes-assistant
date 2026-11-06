@@ -1378,8 +1378,9 @@ function App() {
           {modal === "tasks" && (
             <>
               <p className="modal-description">
-                课堂任务并发 2，后台任务并发 1。课堂总时限 18
-                秒（包含排队）；后台整课任务上限30分钟，按批次显示进度并可重试。费用见课程空间底部。
+                课堂任务并发 2，后台任务并发 1。普通课堂任务总时限 18
+                秒（包含排队）； 思考、大输出及后台任务上限 30
+                分钟，按批次显示进度并可重试。费用见课程空间底部。
               </p>
               {[...tasks].reverse().map((t: Obj) => (
                 <div className="task-card" key={t.id}>
@@ -2659,6 +2660,21 @@ function SettingsForm({
             true,
           )}
         </div>
+        {safeHost(v.textUrl, "") === "api.deepseek.com" && (
+          <>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={v.textThinking === true}
+                onChange={(e) => setV({ ...v, textThinking: e.target.checked })}
+              />
+              启用思考模式（DeepSeek）
+            </label>
+            <p className="help">
+              开启后可能耗时更久；思考与最终答案共用输出额度，笔记只采用最终答案。
+            </p>
+          </>
+        )}
       </div>
       {asrBackendDraft === "cloud" ? (
         <div className="settings-section cloud-asr-settings">
@@ -2768,12 +2784,16 @@ function SettingsForm({
           <input
             type="number"
             min={256}
-            max={16000}
+            max={393216}
             value={v.maxOutput}
             onChange={(e) => setV({ ...v, maxOutput: Number(e.target.value) })}
           />
         </label>
       </div>
+      <p className="help">
+        软件允许 256–393216
+        tokens；实际输出仍受模型及上下文限制。此值是每次请求的上限，整课分批时分别生效，并非整课总量。
+      </p>
       {field("policy", "供应商数据保留说明 / 政策链接")}
       <p className="help">
         此上限控制文本及文件转写调用次数，不能视为金额上限；实时语音按连接音频计费，请同时在供应商后台设置预算。
