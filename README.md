@@ -1,6 +1,6 @@
 # 听课笔记助手 · Windows / macOS 课程空间版
 
-**v0.3.1**，基于 `lecture-notes-local-asr-v0.2.0` 分支的 `460cad1`，按[需求变更清单 v0.3](docs/requirements-v0.3.md)实现。保留本地ASR与通义听悟，新增课程共享笔记、多对话、预习复习，自动模式改为课后完整整理。
+**v0.3.2**，修复 DeepSeek 结构化输出与截断识别（见[修复说明](docs/release-v0.3.2.md)）。课程空间功能基于 `lecture-notes-local-asr-v0.2.0` 分支的 `460cad1`，按[需求变更清单 v0.3](docs/requirements-v0.3.md)实现。保留本地ASR与通义听悟，新增课程共享笔记、多对话、预习复习，自动模式改为课后完整整理。
 
 ## 使用
 
@@ -45,7 +45,7 @@ npm run pack
 | macOS 当前架构 | `npm run pack:mac` | `npm run dist:mac`（DMG + ZIP） |
 | macOS Intel | — | `npm run dist:mac:x64`（待实机验证） |
 
-Windows 输出 `release-v0.3.1/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.3.1/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
+Windows 输出 `release-v0.3.2/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.3.2/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
 
 Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
 

@@ -69,7 +69,9 @@ async function generate(
         (input.kind === "study"
           ? "这是课程学习任务。回答用户问题或生成预习复习材料。没有足够依据时明确写依据不足；引用定位到选定来源。对话历史不是事实证据。"
           : "");
-  const response = await fetcher(endpoint(config.textUrl), {
+  const requestUrl = endpoint(config.textUrl);
+  const deepseek = new URL(requestUrl).hostname === "api.deepseek.com";
+  const response = await fetcher(requestUrl, {
     method: "POST",
     redirect: "error",
     headers: {
@@ -85,6 +87,14 @@ async function generate(
       ],
       stream: true,
       max_tokens: config.maxOutput,
+      // Official DeepSeek defaults to thinking mode. Notes require the final
+      // structured answer within the existing user-configured output budget.
+      ...(deepseek
+        ? {
+            response_format: { type: "json_object" },
+            thinking: { type: "disabled" },
+          }
+        : {}),
     }),
     signal,
   });
@@ -112,7 +122,9 @@ async function generate(
     );
   }
   let output = "",
-    usage = null;
+    usage = null,
+    finishReason = null,
+    hasReasoning = false;
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     const reader = response.body.getReader(),
       decoder = new TextDecoder();
@@ -125,7 +137,10 @@ async function generate(
       const obj = JSON.parse(data);
       if (obj.error) fail("PROVIDER_ERROR", "服务在流式响应中返回错误");
       usage = obj.usage || usage;
-      const delta = obj.choices?.[0]?.delta?.content || "";
+      const choice = obj.choices?.[0];
+      finishReason = choice?.finish_reason || finishReason;
+      hasReasoning ||= !!choice?.delta?.reasoning_content;
+      const delta = choice?.delta?.content || "";
       output += delta;
       check(output.length < 500000, "响应超过安全限制");
       const m = output.match(/"content_md"\s*:\s*"((?:[^"\\]|\\.)*)/);
@@ -144,9 +159,29 @@ async function generate(
     if (buffer.trim()) accept(buffer.trim());
   } else {
     const obj = await response.json();
-    output = obj.choices?.[0]?.message?.content || "";
+    const choice = obj.choices?.[0];
+    output = choice?.message?.content || "";
+    finishReason = choice?.finish_reason || null;
+    hasReasoning = !!choice?.message?.reasoning_content;
     usage = obj.usage;
   }
+  if (finishReason === "length")
+    fail(
+      "MODEL_OUTPUT_LIMIT",
+      `模型已达到本次 ${config.maxOutput} tokens 输出上限，结果可能被截断；原笔记未覆盖。请提高单次输出上限或缩小资料范围后重新生成。`,
+    );
+  if (finishReason && finishReason !== "stop")
+    fail(
+      "MODEL_INCOMPLETE_OUTPUT",
+      "模型因过滤、服务中断或非文本输出而未正常完成；原笔记未覆盖。请检查任务范围或服务状态后重试。",
+    );
+  if (!output.trim())
+    fail(
+      hasReasoning ? "MODEL_REASONING_ONLY" : "MODEL_EMPTY_OUTPUT",
+      hasReasoning
+        ? "模型只返回了思考内容，没有最终笔记；原笔记未覆盖。请检查模型模式与输出额度。"
+        : "模型返回了空白内容，没有可用的 JSON；原笔记未覆盖。请缩小范围或检查服务后重试。",
+    );
   let result;
   try {
     result = JSON.parse(
