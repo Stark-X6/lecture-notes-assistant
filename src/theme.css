@@ -419,8 +419,7 @@ button.organize-main {
   color: #4d6644;
   font-size: 12px;
 }
-.empty-state h3,
-.note-empty h3 {
+.empty-state h3 {
   color: var(--ink);
   font-family: var(--display);
 }
@@ -1149,9 +1148,7 @@ button.transcript-submit {
   color: #455b3b;
   font-size: 15px;
 }
-.empty p,
-.note-empty p,
-.note-empty span {
+.empty p {
   color: var(--muted);
   font-size: 12px;
 }

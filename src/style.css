@@ -134,7 +134,7 @@
   padding: 14px 0;
   border-top: 1px solid var(--line);
 }
-.course-note h3 small {
+.course-note .note-section h4 small {
   color: #6b7963;
   font-weight: normal;
 }
@@ -213,15 +213,17 @@
 }
 .workspace.collapse-slides > .column:first-child,
 .workspace.collapse-notes > .column:last-child {
-  grid-template-rows: 0 0 minmax(160px, 1fr) !important;
+  grid-template-rows: 0 0 minmax(0, 1fr) !important;
 }
 .workspace.collapse-book > .column:first-child,
 .workspace.collapse-transcript > .column:last-child {
-  grid-template-rows: minmax(160px, 1fr) 0 0 !important;
+  grid-template-rows: minmax(0, 1fr) 0 0 !important;
 }
-.workspace.collapse-slides.collapse-book > .column:first-child,
-.workspace.collapse-notes.collapse-transcript > .column:last-child {
-  visibility: hidden;
+.workspace:is(.collapse-slides, .collapse-book) > .column:first-child > .resize,
+.workspace:is(.collapse-notes, .collapse-transcript)
+  > .column:last-child
+  > .resize {
+  display: none;
 }
 .markdown img {
   max-width: 100%;
@@ -737,8 +739,18 @@ main {
 }
 .column {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+}
+.column > .panel:first-child {
+  grid-row: 1;
+}
+.column > .resize.horizontal {
+  grid-row: 2;
+}
+.column > .panel:last-child {
+  grid-row: 3;
 }
 .resize {
   position: relative;
@@ -978,6 +990,23 @@ main {
   overflow: auto;
   padding: 8px 23px 18px;
 }
+.note-document-title {
+  min-width: 0;
+}
+.note-document-title h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-section + .note-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.note-section > h3 {
+  margin: 4px 0 8px;
+  font-size: 16px;
+}
 .markdown {
   font-size: 12px;
   line-height: 1.85;
@@ -1063,33 +1092,13 @@ main {
   background: white;
   color: #43614d;
 }
-.note-empty {
-  padding: 22px 0;
-  color: #8b9c7f;
-}
-.note-empty span {
-  font-size: 9px;
-  color: #8b9c7f;
-  letter-spacing: 1px;
-}
-.note-empty h3 {
-  font-size: 17px;
-  font-weight: 500;
-  margin: 13px 0;
-}
-.note-empty p {
-  font-size: 11px;
-}
 .sources {
-  border-top: 1px solid #f3f5ee;
-  margin-top: 20px;
-  padding-top: 10px;
+  margin-top: 10px;
 }
-.sources h4 {
-  font-size: 9px;
-  color: #8b9c7f;
-  font-weight: 500;
-  margin: 0 0 7px;
+.sources summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
 }
 .sources button {
   font-size: 9px;

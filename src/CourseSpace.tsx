@@ -388,7 +388,7 @@ function Outline({
     </details>
   );
 }
-function CourseNote({
+function NoteSection({
   topic,
   onRun,
   s,
@@ -402,10 +402,10 @@ function CourseNote({
     [title, setTitle] = useState(topic.title),
     [parent, setParent] = useState(topic.parentId || "");
   return (
-    <article className="course-note">
-      <h3>
+    <section className="note-section">
+      <h4>
         {topic.title} <small>v{topic.version}</small>
-      </h3>
+      </h4>
       {draft === null ? (
         <Markdown>{topic.body || "暂无笔记内容"}</Markdown>
       ) : (
@@ -535,7 +535,7 @@ function CourseNote({
             </details>
           ))}
       </details>
-    </article>
+    </section>
   );
 }
 function Artifact({
@@ -1217,7 +1217,7 @@ export function CourseSpace({
                     )
                   }
                 >
-                  增加主题
+                  添加章节
                 </button>
                 <button
                   onClick={() =>
@@ -1233,11 +1233,16 @@ export function CourseSpace({
                 </button>
               </div>
             )}
-            {s.topics
-              .filter((t: Obj) => t.noteId === selectedNote?.id)
-              .map((t: Obj) => (
-                <CourseNote key={t.id} topic={t} onRun={onRun} s={s} />
-              ))}
+            {selectedNote && (
+              <article className="course-note">
+                <h3>{selectedNote.name}</h3>
+                {s.topics
+                  .filter((t: Obj) => t.noteId === selectedNote.id)
+                  .map((t: Obj) => (
+                    <NoteSection key={t.id} topic={t} onRun={onRun} s={s} />
+                  ))}
+              </article>
+            )}
             {s.artifacts
               .filter((a: Obj) => a.courseId === course.id)
               .map((a: Obj) => (

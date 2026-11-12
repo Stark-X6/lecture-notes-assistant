@@ -771,6 +771,7 @@ async function importMaterial(a) {
 async function exportNotes(lid) {
   const l = store.lesson(lid),
     c = store.course(l.courseId);
+  const notebook = store.s.notebooks.find((n) => n.id === l.noteId);
   const topics = clone(store.lessonTopics(lid));
   const result = await dialog.showOpenDialog(win, {
     title: "选择导出目录",
@@ -782,9 +783,9 @@ async function exportNotes(lid) {
     .slice(0, 80);
   const target = path.join(result.filePaths[0], name + "-" + Date.now());
   const temp = target + ".tmp";
-  fs.mkdirSync(path.join(temp, "sources"), { recursive: true });
-  let body = `# ${c.name} · ${l.name}\n\n`;
-  const all = [];
+  fs.mkdirSync(temp, { recursive: true });
+  let body = `# ${notebook.name}\n\n`;
+  const footnotes = new Map();
   for (const t of topics) {
     const exported = require("./attachments.cjs").exportMarkdown(
       store,
@@ -796,25 +797,39 @@ async function exportNotes(lid) {
       body += "> 缺失附件：" + exported.missing.join("、") + "\n\n";
     if (t.sources.length) {
       body += "来源：\n";
-      for (const [i, r] of t.sources.entries()) {
+      for (const r of t.sources) {
         const label =
           r.kind === "material"
             ? `${r.name}，第 ${r.page} 页`
             : r.startMs === null
               ? `转录第 ${r.paragraph} 段`
               : `转录 ${Math.round(r.startMs / 1000)}–${Math.round(r.endMs / 1000)} 秒`;
-        const file = `${t.id}-${i}.txt`;
-        fs.writeFileSync(
-          path.join(temp, "sources", file),
-          r.text || "",
-          "utf8",
-        );
-        body += `- [${label}](sources/${file})\n`;
-        all.push(r);
+        const description =
+          r.kind === "transcript" && r.lessonName
+            ? `${r.lessonName} · ${label}`
+            : label;
+        if (!footnotes.has(r.id)) {
+          const key = `source-${footnotes.size + 1}`;
+          const excerpt = (r.text || "").trim();
+          const definition =
+            `[^${key}]: ${description}` +
+            (excerpt
+              ? "\n\n" +
+                excerpt
+                  .split(/\r?\n/)
+                  .map((line) => "    " + line)
+                  .join("\n")
+              : "");
+          footnotes.set(r.id, { key, definition });
+        }
+        body += `- ${description} [^${footnotes.get(r.id).key}]\n`;
       }
       body += "\n";
     }
   }
+  if (footnotes.size)
+    body +=
+      [...footnotes.values()].map((r) => r.definition).join("\n\n") + "\n";
   fs.writeFileSync(path.join(temp, "notes.md"), body, "utf8");
   fs.writeFileSync(
     path.join(temp, "manifest.json"),
@@ -824,7 +839,7 @@ async function exportNotes(lid) {
         course: c.name,
         lesson: l.name,
         versions: topics.map((t) => ({ topicId: t.id, version: t.version })),
-        sources: all.length,
+        sources: footnotes.size,
       },
       null,
       2,

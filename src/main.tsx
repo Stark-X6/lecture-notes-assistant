@@ -168,6 +168,9 @@ function App() {
         .filter((l: Obj) => l.courseId === cid && !l.deleted)
         .sort((a: Obj, b: Obj) => b.startedAt - a.startedAt) || [],
     lesson = lessons.find((l: Obj) => l.id === lid),
+    notebook = s?.notebooks.find(
+      (n: Obj) => n.id === lesson?.noteId && n.courseId === cid,
+    ),
     topics =
       s?.topics.filter(
         (t: Obj) => t.noteId === lesson?.noteId && t.courseId === cid,
@@ -811,6 +814,7 @@ function App() {
               {["slides", "book", "notes", "transcript"].map((key, i) => (
                 <button
                   key={key}
+                  aria-expanded={!collapsed.includes(key)}
                   onClick={() => {
                     const value = collapsed.includes(key)
                       ? collapsed.filter((x) => x !== key)
@@ -925,12 +929,13 @@ function App() {
               >
                 <section className="panel note-panel">
                   <div className="panel-header">
-                    <div className="panel-title">
+                    <div className="panel-title note-document-title">
                       <span className="panel-symbol purple">
                         <FileText size={17} />
                       </span>
-                      <h2>知识笔记</h2>
-                      <span className="muted small">持续沉淀</span>
+                      <h2 title={notebook?.name}>
+                        {notebook?.name || "知识笔记"}
+                      </h2>
                     </div>
                     <div className="row gap6">
                       {candidates.length > 0 && (
@@ -950,21 +955,39 @@ function App() {
                       </button>
                     </div>
                   </div>
-                  <div className="topic-tabs">
+                  <nav className="topic-tabs" aria-label="笔记章节">
                     {topics.map((t: Obj) => (
                       <button
                         className={tid === t.id ? "active" : ""}
+                        aria-current={tid === t.id ? "location" : undefined}
                         key={t.id}
-                        onClick={() => void run(async () => setTid(t.id))}
+                        onClick={() =>
+                          void run(async () => {
+                            setTid(t.id);
+                            requestAnimationFrame(() => {
+                              const section = document.getElementById(
+                                "note-section-" + t.id,
+                              );
+                              const scroll = section?.parentElement;
+                              if (section && scroll)
+                                scroll.scrollTop +=
+                                  section.getBoundingClientRect().top -
+                                  scroll.getBoundingClientRect().top;
+                            });
+                          })
+                        }
                       >
                         {t.title}
                         {t.human && <span title="人工编辑保护">·</span>}
                       </button>
                     ))}
-                    <button title="新建主题" onClick={() => setModal("topic")}>
+                    <button
+                      title="添加笔记章节"
+                      onClick={() => setModal("topic")}
+                    >
                       <Plus size={15} />
                     </button>
-                  </div>
+                  </nav>
                   {tasks
                     .filter((t: Obj) => t.state === "running" && t.preview)
                     .map((t: Obj) => (
@@ -976,21 +999,52 @@ function App() {
                         <p>{t.preview.slice(-800)}</p>
                       </div>
                     ))}
-                  {topic ? (
-                    <NoteEditor
-                      key={topic.id}
-                      topic={topic}
-                      flushRef={flush}
-                      onError={setNotice}
-                      onSaved={refresh}
-                      onSource={openSource}
-                    />
+                  {topics.length ? (
+                    <article className="note-scroll">
+                      {topics.map((t: Obj) => (
+                        <section
+                          className="note-section"
+                          id={"note-section-" + t.id}
+                          key={t.id}
+                        >
+                          <h3>{t.title}</h3>
+                          {t.id === tid ? (
+                            <NoteEditor
+                              topic={t}
+                              flushRef={flush}
+                              onError={setNotice}
+                              onSaved={refresh}
+                            />
+                          ) : t.body ? (
+                            <Markdown>{t.body}</Markdown>
+                          ) : (
+                            <p className="muted small">暂无章节内容</p>
+                          )}
+                          {t.sources.length > 0 && (
+                            <details className="sources">
+                              <summary>章节来源（{t.sources.length}）</summary>
+                              {t.sources.map((r: Obj, i: number) => (
+                                <button key={i} onClick={() => openSource(r)}>
+                                  <span>{i + 1}</span>
+                                  {r.kind === "material"
+                                    ? `${r.name} · 第 ${r.page} 页`
+                                    : r.startMs === null
+                                      ? `课堂转录 · 第 ${r.paragraph} 段`
+                                      : `课堂转录 · ${clock(r.startMs)}`}
+                                  <ArrowUpRight size={12} />
+                                </button>
+                              ))}
+                            </details>
+                          )}
+                        </section>
+                      ))}
+                    </article>
                   ) : (
                     <Empty
                       icon={<FileText size={30} />}
-                      title="尚无笔记主题"
-                      description="整理课堂笔记，或手动创建主题。"
-                      action="新建主题"
+                      title="这份笔记还没有章节"
+                      description="整理课堂笔记，或手动添加章节。"
+                      action="添加章节"
                       onAction={() => setModal("topic")}
                     />
                   )}
@@ -1911,13 +1965,11 @@ function NoteEditor({
   flushRef,
   onError,
   onSaved,
-  onSource,
 }: {
   topic: Obj;
   flushRef: React.MutableRefObject<() => Promise<void>>;
   onError: (s: string) => void;
   onSaved: () => Promise<void>;
-  onSource: (r: Obj) => void;
 }) {
   const [body, setBody] = useState(topic.body),
     [editing, setEditing] = useState(false),
@@ -2019,7 +2071,7 @@ function NoteEditor({
           </button>
         </div>
       </div>
-      <div className="note-scroll">
+      <>
         {!saved && topic.version !== current.current.version && (
           <div className="inline-error">
             笔记已更新，你的草稿仍在编辑器中。
@@ -2058,29 +2110,9 @@ function NoteEditor({
         ) : body ? (
           <Markdown>{body}</Markdown>
         ) : (
-          <div className="note-empty">
-            <span>{topic.title}</span>
-            <h3>这份笔记还没有内容</h3>
-            <p>点击顶部「整理课堂笔记」，或手动编辑。</p>
-          </div>
+          <p className="muted small">暂无章节内容</p>
         )}
-        {topic.sources.length > 0 && (
-          <div className="sources">
-            <h4>笔记来源</h4>
-            {topic.sources.map((r: Obj, i: number) => (
-              <button key={i} onClick={() => onSource(r)}>
-                <span>{i + 1}</span>
-                {r.kind === "material"
-                  ? `${r.name} · 第 ${r.page} 页`
-                  : r.startMs === null
-                    ? `课堂转录 · 第 ${r.paragraph} 段`
-                    : `课堂转录 · ${clock(r.startMs)}`}
-                <ArrowUpRight size={12} />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      </>
     </>
   );
 }

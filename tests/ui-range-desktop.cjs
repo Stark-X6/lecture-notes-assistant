@@ -9,9 +9,15 @@ const { Store } = require("../electron/core.cjs");
   seed.s.config.mode = "mock";
   seed.s.config.asrBackend = "cloud";
   const course = seed.createCourse("计算机网络"),
-    lesson = seed.createLesson(course.id, "第一讲 · 网络与分组交换");
+    notebook = seed.newNotebook(course.id, "网络原理笔记"),
+    lesson = seed.createLesson(course.id, "第一讲 · 网络与分组交换", {
+      noteId: notebook.id,
+    });
   const topic = seed.topic(lesson.id, "分组交换"),
-    next = seed.createLesson(course.id, "下一次课堂");
+    next = seed.createLesson(course.id, "下一次课堂"),
+    queue = seed.topic(lesson.id, "排队时延");
+  seed.saveNote(queue.id, 0, "缓冲区中的分组需要等待发送。");
+  seed.saveNote(seed.topic(next.id, "无关章节").id, 0, "另一份笔记的内容。");
   const timed = [
     seed.addUtterance(lesson.id, "网络边缘由端系统组成。", {
       startMs: 0,
@@ -141,6 +147,61 @@ const { Store } = require("../electron/core.cjs");
     ).toBeInViewport();
 
     await page.setViewportSize({ width: 1500, height: 970 });
+    const panels = {
+      课件: page.locator(".material-slides"),
+      教材: page.locator(".material-book"),
+      笔记: page.locator(".note-panel"),
+      转录: page.locator(".transcript-panel"),
+    };
+    for (const name of Object.keys(panels)) {
+      await page
+        .getByRole("button", { name: "折叠" + name, exact: true })
+        .click();
+      await expect(panels[name]).toBeHidden();
+      for (const [other, panel] of Object.entries(panels)) {
+        if (other === name) continue;
+        await expect(panel).toBeVisible();
+        assert.ok(
+          (await panel.boundingBox()).height >= 160,
+          other + "被一同折叠",
+        );
+      }
+      await page
+        .getByRole("button", { name: "展开" + name, exact: true })
+        .click();
+      await expect(panels[name]).toBeVisible();
+    }
+    await page.getByRole("button", { name: "折叠课件", exact: true }).click();
+    await page.getByRole("button", { name: "折叠教材", exact: true }).click();
+    await expect(panels.课件).toBeHidden();
+    await expect(panels.教材).toBeHidden();
+    await page.getByRole("button", { name: "展开教材", exact: true }).click();
+    await expect(panels.教材).toBeVisible();
+    await expect(panels.课件).toBeHidden();
+    await page.getByRole("button", { name: "展开课件", exact: true }).click();
+    await expect(
+      panels.笔记.getByRole("heading", { name: notebook.name }),
+    ).toBeVisible();
+    await expect(
+      panels.笔记.getByRole("heading", { name: "分组交换" }),
+    ).toBeVisible();
+    await expect(
+      panels.笔记.getByText("缓冲区中的分组需要等待发送。"),
+    ).toBeVisible();
+    await expect(panels.笔记.getByText("另一份笔记的内容。")).toHaveCount(0);
+    await panels.笔记.getByRole("button", { name: /^排队时延/ }).click();
+    await panels.笔记
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    await expect(panels.笔记.getByLabel("Markdown 笔记编辑器")).toHaveValue(
+      "缓冲区中的分组需要等待发送。",
+    );
+    await expect(
+      panels.笔记.getByRole("heading", { name: "分组交换" }),
+    ).toBeVisible();
+    await panels.笔记
+      .getByRole("button", { name: "阅读", exact: true })
+      .click();
     fs.mkdirSync("artifacts", { recursive: true });
     await page.screenshot({ path: "artifacts/ui-classroom-wide.png" });
     await page.setViewportSize({ width: 1050, height: 720 });
@@ -148,9 +209,21 @@ const { Store } = require("../electron/core.cjs");
     await page.screenshot({ path: "artifacts/ui-classroom-compact.png" });
     await page.getByRole("button", { name: "课程空间", exact: true }).click();
     await page.setViewportSize({ width: 1500, height: 970 });
+    await page
+      .getByLabel("课程笔记", { exact: true })
+      .selectOption(notebook.id);
+    const document = page.locator(".studio-column article").filter({
+      has: page.getByRole("heading", { name: notebook.name, exact: true }),
+    });
+    await expect(
+      document.getByRole("heading", { name: /^分组交换/ }),
+    ).toBeVisible();
+    await expect(
+      document.getByRole("heading", { name: /^排队时延/ }),
+    ).toBeVisible();
     await page.screenshot({ path: "artifacts/ui-course-wide.png" });
     console.log(
-      "PASS: range overlap, search isolation, batch assignment, selected-only notes, paragraph fallback, lesson isolation, prominent whole generation and responsive views",
+      "PASS: range selection, shared note document and section editing, independent panel collapse, responsive classroom and course views",
     );
   } finally {
     await application.close().catch(() => {});

@@ -38,7 +38,11 @@ function ManagedImage({ src, alt }: { src?: string; alt?: string }) {
     </span>
   );
 }
-export function Markdown({ children }: { children: string }) {
+export const Markdown = React.memo(function Markdown({
+  children,
+}: {
+  children: string;
+}) {
   return (
     <div className="markdown">
       <ReactMarkdown
@@ -60,4 +64,4 @@ export function Markdown({ children }: { children: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

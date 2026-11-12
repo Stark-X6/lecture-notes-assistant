@@ -162,21 +162,24 @@ function routes(context) {
       const { store, dialog, win, shell } = get();
       store.course(a.courseId);
       let items;
+      let markdown;
       if (a.noteId) {
-        check(
-          store.s.notebooks.some(
-            (n) => n.id === a.noteId && n.courseId === a.courseId,
-          ),
+        const notebook = store.s.notebooks.find(
+          (n) => n.id === a.noteId && n.courseId === a.courseId,
         );
-        items = store.s.topics
-          .filter((t) => t.noteId === a.noteId)
-          .map((t) => ({ ...t, name: t.title }));
+        check(notebook);
+        items = clone(store.s.topics.filter((t) => t.noteId === notebook.id));
+        markdown = [
+          "# " + notebook.name,
+          ...items.map((t) => "## " + t.title + "\n\n" + t.body),
+        ].join("\n\n");
       } else {
         const item = store.s.artifacts.find(
           (x) => x.id === a.id && x.courseId === a.courseId,
         );
         check(item);
-        items = [item];
+        items = [clone(item)];
+        markdown = "# " + item.name + "\n\n" + item.body;
       }
       const result = await dialog.showOpenDialog(win, {
         title: "导出课程笔记与附件",
@@ -185,11 +188,7 @@ function routes(context) {
       if (result.canceled) return;
       const dir = path.join(result.filePaths[0], "课程学习导出-" + Date.now());
       fs.mkdirSync(dir, { recursive: true });
-      const exported = attachment.exportMarkdown(
-        store,
-        items.map((t) => "# " + t.name + "\n\n" + t.body).join("\n\n"),
-        dir,
-      );
+      const exported = attachment.exportMarkdown(store, markdown, dir);
       atomicWrite(path.join(dir, "notes.md"), exported.body);
       atomicWrite(
         path.join(dir, "sources.json"),

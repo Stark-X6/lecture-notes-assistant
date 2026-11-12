@@ -146,14 +146,13 @@ const fs = require("node:fs"),
       (lid) => window.desktop.invoke("note.export", { lessonId: lid }),
       lesson.id,
     );
-    if (
-      !fs
-        .readFileSync(path.join(exported, "notes.md"), "utf8")
-        .includes("亲自修改")
-    )
-      throw new Error("导出缺少固定版本笔记");
-    if (!fs.readdirSync(path.join(exported, "sources")).length)
-      throw new Error("导出缺少来源附件");
+    const markdown = fs.readFileSync(path.join(exported, "notes.md"), "utf8");
+    if (!markdown.includes("亲自修改")) throw new Error("导出缺少固定版本笔记");
+    const citation = markdown.match(/\[\^(source-\d+)\]/)?.[1];
+    if (!citation || !markdown.includes(`[^${citation}]:`))
+      throw new Error("导出缺少同一文档中的来源脚注");
+    if (fs.existsSync(path.join(exported, "sources")))
+      throw new Error("导出仍为每条来源创建文件");
     await page.getByRole("button", { name: "开始录音", exact: true }).click();
     await page.waitForFunction(() =>
       document.querySelector(".record-indicator")?.classList.contains("live"),
