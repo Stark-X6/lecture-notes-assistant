@@ -69,6 +69,9 @@ async function generate(
       : RULES +
         (input.kind === "study"
           ? "这是课程学习任务。回答用户问题或生成预习复习材料。没有足够依据时明确写依据不足；引用定位到选定来源。对话历史不是事实证据。"
+          : "") +
+        (input.noteScope
+          ? `本次只生成新增正文。已有主题只提供标题用于匹配，不得据此扩写原笔记。按${input.noteScope.order === "book" ? "相关教材页的顺序与已有小节" : "所选课件页的顺序与已有小节"}组织。课件只使用 sources 中 materialRole 为 slides 的页，教材只使用 materialRole 为 book 的命中页。只写与本次主题直接相关的细节、推导和例子；不要从章节标题、目录、教材页上的邻近主题或宽泛提示扩成一整章。${input.noteScope.requiresSlides ? "每个块必须引用支持其内容的所选课件页，课堂转录和教材可补充这些主题，不独立扩展范围。" : "每个块必须引用支持其内容的本次课堂转录，教材用于组织和补充。"}没有本批相关证据时返回空 blocks。若知识点已有同名主题，沿用其 ID。`
           : "");
   const requestUrl = endpoint(config.textUrl);
   const deepseek = new URL(requestUrl).hostname === "api.deepseek.com";

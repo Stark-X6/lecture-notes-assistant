@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { TranscriptPanel } from "./TranscriptPanel";
-import { CourseSpace, LessonSetup } from "./CourseSpace";
+import { CourseSpace, LessonSetup, NoteStructureSelect } from "./CourseSpace";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "./style.css";
@@ -271,14 +271,21 @@ function App() {
       for (let p = 1; p <= doc.numPages; p++) {
         const page = await doc.getPage(p);
         const text = await page.getTextContent();
-        pages.push(text.items.map((x: any) => x.str || "").join(" "));
+        pages.push(
+          text.items
+            .map((x: any) => (x.str || "") + (x.hasEOL ? "\n" : " "))
+            .join(""),
+        );
       }
       await invoke("material.index", { id: m.id, pages });
       await invoke("lesson.context", {
         lessonId: lid,
         context: {
           ...lesson.context,
-          [kind]: { id: m.id, from: 1, to: pages.length },
+          [kind]:
+            kind === "slides"
+              ? { id: m.id, from: 1, to: pages.length }
+              : { id: m.id },
         },
       });
       await doc.destroy();
@@ -661,7 +668,9 @@ function App() {
                   title={
                     recording || paused
                       ? "结束录音后整理整课"
-                      : "将本课转录与所选资料整理到笔记"
+                      : lesson.context.slides
+                        ? `仅整理课件第 ${lesson.context.slides.from}–${lesson.context.slides.to} 页涉及的内容`
+                        : "将本课转录与相关资料整理到笔记"
                   }
                   onClick={() =>
                     void call("submission.create", { all: true, prompt: hint })
@@ -801,6 +810,14 @@ function App() {
               <button onClick={() => setModal("lesson-edit")}>
                 课堂日期与共享资料
               </button>
+              <NoteStructureSelect
+                context={lesson.context}
+                onChange={(outlineSource) =>
+                  void call("lesson.context", {
+                    context: { ...lesson.context, outlineSource },
+                  })
+                }
+              />
               <label>
                 <input
                   type="checkbox"
@@ -888,7 +905,7 @@ function App() {
                   kind="slides"
                   viewPage={viewPages.slides}
                   title="课程课件"
-                  subtitle="页码用于阅读，AI 范围单独设置"
+                  subtitle="阅读页码独立，AI 按选定课件页整理"
                   materials={materials}
                   range={lesson.context.slides}
                   onImport={() => void run(() => importPdf("slides"))}
@@ -907,7 +924,7 @@ function App() {
                   kind="book"
                   viewPage={viewPages.book}
                   title="参考教材"
-                  subtitle="仅使用选定教材页作为参考"
+                  subtitle="教材可自由翻阅，整理时自动检索相关页"
                   materials={materials}
                   range={lesson.context.book}
                   onImport={() => void run(() => importPdf("book"))}
@@ -1843,10 +1860,22 @@ function MaterialPanel({
             <select
               aria-label={title + "文件"}
               value={material.id}
-              onChange={(e) => onRange({ id: e.target.value, from: 1, to: 1 })}
+              onChange={(e) => {
+                const next = materials.find((m) => m.id === e.target.value);
+                if (next)
+                  onRange(
+                    kind === "slides"
+                      ? { id: next.id, from: 1, to: next.pages.length }
+                      : { id: next.id },
+                  );
+              }}
             >
               {materials
-                .filter((m) => m.kind === kind && m.ext === ".pdf")
+                .filter(
+                  (m) =>
+                    m.id === material.id ||
+                    (m.kind === kind && m.ext === ".pdf"),
+                )
                 .map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
@@ -1901,31 +1930,33 @@ function MaterialPanel({
             >
               <ChevronRight size={15} />
             </button>
-            <label>
-              AI 从{" "}
-              <input
-                aria-label={title + "范围起始页"}
-                type="number"
-                min={1}
-                max={range.to}
-                value={range.from}
-                onChange={(e) => onRange({ ...range, from: +e.target.value })}
-              />{" "}
-              到第{" "}
-              <input
-                aria-label={title + "范围结束页"}
-                type="number"
-                min={range.from}
-                max={doc?.numPages || 1}
-                value={range.to}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  if (n >= range.from && n <= (doc?.numPages || 1))
-                    onRange({ ...range, to: n });
-                }}
-              />{" "}
-              页
-            </label>
+            {kind === "slides" && (
+              <label>
+                AI 从{" "}
+                <input
+                  aria-label={title + "范围起始页"}
+                  type="number"
+                  min={1}
+                  max={range.to}
+                  value={range.from}
+                  onChange={(e) => onRange({ ...range, from: +e.target.value })}
+                />{" "}
+                到第{" "}
+                <input
+                  aria-label={title + "范围结束页"}
+                  type="number"
+                  min={range.from}
+                  max={doc?.numPages || 1}
+                  value={range.to}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (n >= range.from && n <= (doc?.numPages || 1))
+                      onRange({ ...range, to: n });
+                  }}
+                />{" "}
+                页
+              </label>
+            )}
           </div>
         </>
       ) : (
@@ -1935,7 +1966,12 @@ function MaterialPanel({
             value=""
             onChange={(e) => {
               const m = materials.find((m) => m.id === e.target.value);
-              if (m) onRange({ id: m.id, from: 1, to: m.pages.length });
+              if (m)
+                onRange(
+                  kind === "slides"
+                    ? { id: m.id, from: 1, to: m.pages.length }
+                    : { id: m.id },
+                );
             }}
           >
             <option value="">选择课程已有资料…</option>

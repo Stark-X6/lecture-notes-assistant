@@ -1,4 +1,5 @@
 const { check, clone, hash, validateResult } = require("./core.cjs");
+const { scopedBatch, structureForSources } = require("./note-scope.cjs");
 // Bounded input batches with overlap. Intermediate validated results are durable;
 // retry reuses them and only repeats failed or unfinished provider requests.
 function splitSources(sources, size = 18000) {
@@ -45,7 +46,12 @@ function boundedTopics(topics, sources, size = 18000) {
 async function runLong(store, task, invoke, signal, preview) {
   const input = task.input,
     size = task.batchSize || 18000,
-    batches = splitSources(input.sources, size);
+    batches = splitSources(
+      input.noteScope
+        ? input.sources.filter((s) => s.materialRole !== "book")
+        : input.sources,
+      size,
+    );
   task.checkpoints ||= {};
   let output = [];
   async function request(label, value) {
@@ -66,7 +72,9 @@ async function runLong(store, task, invoke, signal, preview) {
     );
     signal.throwIfAborted();
     check(task.state === "running", "任务已取消");
-    validateResult(result, value);
+    validateResult(result, value, {
+      allowEmpty: !!value.noteScope && label.startsWith("分析 "),
+    });
     store.tx(() => {
       task.checkpoints[key] = clone(result);
     });
@@ -78,17 +86,17 @@ async function runLong(store, task, invoke, signal, preview) {
           .slice(-1)
           .map((s) => ({ ...s, text: s.text.slice(-Math.min(2000, size / 4)) }))
       : [];
-    const sources = [...overlap, ...batches[i]];
+    const batch = [...overlap, ...batches[i]];
+    const sources = input.noteScope ? scopedBatch(input, batch) : batch;
     const value = {
       ...input,
       sources,
+      structure: structureForSources(input, sources),
       utterances: [],
-      history: (input.history || [])
-        .slice(-12)
-        .map((m) => ({
-          role: m.role,
-          text: m.text.slice(-Math.min(1500, size / 12)),
-        })),
+      history: (input.history || []).slice(-12).map((m) => ({
+        role: m.role,
+        text: m.text.slice(-Math.min(1500, size / 12)),
+      })),
       topics: boundedTopics(input.topics, sources, size),
       prompt:
         input.prompt +
@@ -111,17 +119,18 @@ async function runLong(store, task, invoke, signal, preview) {
   const final = [];
   for (const [tid, blocks] of groups) {
     const baseline = input.topics.find((t) => t.id === tid);
-    let merged = baseline
-      ? {
-          topic_id: tid,
-          title: baseline.title,
-          content_md: baseline.body,
-          source_ids: baseline.sources
-            .map((s) => s.id)
-            .filter((id) => input.sources.some((s) => s.id === id)),
-          evidence_type: "teacher_explanation",
-        }
-      : null;
+    let merged =
+      baseline && !input.noteScope
+        ? {
+            topic_id: tid,
+            title: baseline.title,
+            content_md: baseline.body,
+            source_ids: baseline.sources
+              .map((s) => s.id)
+              .filter((id) => input.sources.some((s) => s.id === id)),
+            evidence_type: "teacher_explanation",
+          }
+        : null;
     for (const [index, b] of blocks.entries()) {
       if (!merged) {
         merged = b;
@@ -142,6 +151,7 @@ async function runLong(store, task, invoke, signal, preview) {
           utterances: [],
           history: [],
           sources,
+          structure: structureForSources(input, sources),
           topics: [
             {
               id: tid,
@@ -164,6 +174,7 @@ async function runLong(store, task, invoke, signal, preview) {
     }
     final.push(merged);
   }
+  if (input.noteScope) check(final.length, "没有可合入选定范围的笔记内容");
   // Validate each block separately, allowing more than 50 themes in a whole course.
   return { schema_version: "1", blocks: final };
 }

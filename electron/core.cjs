@@ -339,20 +339,29 @@ class Store {
   }
   setContext(lid, context) {
     const l = this.lesson(lid);
-    for (const key of ["slides", "book"])
-      if (context[key]) {
-        const m = this.s.materials.find(
-          (m) => m.id === context[key].id && m.courseId === l.courseId,
-        );
-        check(m, "材料不属于本课程");
+    const next = clone(context);
+    for (const key of ["slides", "book"]) {
+      if (!next[key]) continue;
+      const m = this.s.materials.find(
+        (m) => m.id === next[key].id && m.courseId === l.courseId,
+      );
+      check(m, "材料不属于本课程");
+      if (key === "book") next.book = { id: m.id };
+      else
         check(
-          Number.isInteger(context[key].from) &&
-            context[key].from >= 1 &&
-            context[key].to >= context[key].from &&
-            context[key].to <= m.pages.length,
-          "页码范围无效",
+          Number.isInteger(next.slides.from) &&
+            Number.isInteger(next.slides.to) &&
+            next.slides.from >= 1 &&
+            next.slides.to >= next.slides.from &&
+            next.slides.to <= m.pages.length,
+          "课件页码范围无效",
         );
-      }
+    }
+    if (next.outlineSource)
+      check(
+        ["slides", "book", "transcript"].includes(next.outlineSource),
+        "笔记结构来源无效",
+      );
     if (context.topicId)
       check(
         this.s.topics.some(
@@ -360,8 +369,11 @@ class Store {
         ),
       );
     return this.tx(() => {
-      l.context = clone(context);
-      this.event(lid, "page.context", { captureMs: l.captureMs, context });
+      l.context = next;
+      this.event(lid, "page.context", {
+        captureMs: l.captureMs,
+        context: next,
+      });
     });
   }
   freeze(lid, opts = {}) {
@@ -408,38 +420,52 @@ class Store {
         this.s.utterances.filter((x) => x.lessonId === lid).indexOf(u) + 1,
       topicId: u.topicId,
     }));
-    for (const k of ["slides", "book"]) {
-      const range = context[k];
-      if (range) {
-        const m = this.s.materials.find(
-          (m) => m.id === range.id && m.courseId === l.courseId,
-        );
-        check(m);
-        for (let p = range.from; p <= range.to; p++)
-          refs.push({
-            id: `p:${m.id}:${p}:${m.sha}`,
-            version: m.sha,
-            kind: "material",
-            targetId: m.id,
-            page: p,
-            name: m.name,
-            text: m.pages[p - 1] || "",
-          });
-      }
-    }
-    if (!all && context.book) {
-      const selectedBook = refs.filter(
-        (r) => r.kind === "material" && r.targetId === context.book.id,
+    const scope = require("./note-scope.cjs");
+    const material = (selection) =>
+      selection &&
+      this.s.materials.find(
+        (m) => m.id === selection.id && m.courseId === l.courseId,
       );
-      const selected = require("./study.cjs").retrieve(
-        selectedBook,
-        us.map((u) => u.text).join(" "),
-        12,
+    const slides = material(context.slides);
+    const selectedBook = material(context.book);
+    const book = selectedBook?.id === slides?.id ? undefined : selectedBook;
+    const order =
+      context.outlineSource === "book" && book
+        ? "book"
+        : slides
+          ? "slides"
+          : "transcript";
+    const noteScope =
+      slides || order === "book"
+        ? { order, requiresSlides: !!slides }
+        : undefined;
+    const slidePages = slides
+      ? scope
+          .pageRefs(slides, "slides", context.slides.from, context.slides.to)
+          .filter((p) => p.text.trim())
+      : [];
+    if (slides)
+      check(slidePages.length, "所选课件页没有可提取文字，请调整课件范围");
+    const bookPages = book
+      ? scope
+          .relevant(
+            scope.pageRefs(book, "book"),
+            slidePages.length
+              ? slidePages.map((p) => p.text)
+              : us.map((u) => u.text),
+            scope.BOOK_PAGE_LIMIT,
+          )
+          .map((p) => ({
+            ...p,
+            text: p.text.slice(0, scope.BOOK_EXCERPT_CHARS),
+          }))
+      : [];
+    if (order === "book")
+      check(
+        bookPages.length,
+        "未在教材中找到相关页面，请检查教材，或改用课件／课堂讲解结构",
       );
-      for (let i = refs.length - 1; i >= 0; i--)
-        if (selectedBook.includes(refs[i]) && !selected.includes(refs[i]))
-          refs.splice(i, 1);
-    }
+    refs.push(...slidePages, ...bookPages);
     const topics = this.s.topics
       .filter(
         (t) =>
@@ -456,9 +482,13 @@ class Store {
         sources: clone(t.sources),
       }));
     if (opts.baseline) topics.splice(0, topics.length, ...clone(opts.baseline));
-    // Historical transcript evidence remains readable. Material excerpts are
-    // never sent through the topic context unless their page is selected now.
+    // Scoped requests use old headings as writing targets, and merge locally.
     for (const topic of topics) {
+      if (noteScope) {
+        topic.body = "";
+        topic.sources = [];
+        continue;
+      }
       for (const source of topic.sources) {
         if (
           source.kind === "transcript" &&
@@ -476,7 +506,9 @@ class Store {
       noteId,
       incomplete: opts.incomplete || null,
       whole: !!opts.all,
-      utterances: clone(us),
+      utterances: noteScope
+        ? us.map((u) => ({ ...u, history: [] }))
+        : clone(us),
       sources: refs,
       topics,
       context: clone(context),
@@ -484,13 +516,17 @@ class Store {
       template: clone(opts.template || c.template),
       provider: clone(this.s.config),
       forceCandidate: !!opts.all,
-      structure: [context.slides, context.book]
-        .filter(Boolean)
-        .flatMap((range) =>
-          (
-            this.s.materials.find((m) => m.id === range.id)?.outline || []
-          ).filter((n) => n.to >= range.from && n.from <= range.to),
-        ),
+      noteScope,
+      structure:
+        order === "slides"
+          ? scope.outlineForPages(
+              slides,
+              slidePages.map((p) => p.page),
+            )
+          : scope.outlineForPages(
+              book,
+              bookPages.map((p) => p.page),
+            ),
     };
     check(
       opts.all || opts.preview || JSON.stringify(input).length < 160000,
@@ -593,15 +629,30 @@ class Store {
         task.finishedAt = Date.now();
         return;
       }
-      for (const b of result.blocks) {
+      const noteScope = task.input.noteScope;
+      const position = (block) =>
+        require("./note-scope.cjs").position(block, task.input);
+      const blocks = noteScope
+        ? [...result.blocks].sort((a, b) => {
+            const first = position(a),
+              second = position(b);
+            return (
+              Number(first.fallback) - Number(second.fallback) ||
+              first.page - second.page
+            );
+          })
+        : result.blocks;
+      for (const b of blocks) {
         let topic = s.topics.find(
           (t) =>
             t.noteId === task.input.noteId &&
             (t.id === b.topic_id ||
               (b.topic_id.startsWith("new:") && t.title === b.title)),
         );
-        const baseline = task.input.topics.find((t) => t.id === b.topic_id);
-        const sources = b.source_ids.map((r) =>
+        const baseline = task.input.topics.find(
+          (t) => t.id === (topic?.id || b.topic_id),
+        );
+        let sources = b.source_ids.map((r) =>
           clone(task.input.sources.find((s) => s.id === r)),
         );
         if (task.input.migration)
@@ -627,7 +678,20 @@ class Store {
             sources: [],
             stale: false,
           };
-          s.topics.push(topic);
+          if (noteScope) {
+            const { materialId, page } = position(b);
+            if (materialId) {
+              topic.outlinePosition = { materialId, page };
+              const index = s.topics.findIndex(
+                (t) =>
+                  t.noteId === task.input.noteId &&
+                  t.outlinePosition?.materialId === materialId &&
+                  t.outlinePosition.page > page,
+              );
+              if (index >= 0) s.topics.splice(index, 0, topic);
+              else s.topics.push(topic);
+            } else s.topics.push(topic);
+          } else s.topics.push(topic);
         }
         if (task.input.incomplete)
           b.content_md =
@@ -635,14 +699,30 @@ class Store {
             task.input.incomplete.reasons.join("；") +
             "\n\n" +
             b.content_md;
-        b.content_md = require("./presentation.cjs").format(
-          b.content_md,
-          task.input.template.rules,
-          sources,
-        );
+        const format = require("./presentation.cjs").format;
+        let body = format(b.content_md, task.input.template.rules, sources);
         const scopeConflict = topic.sources.some(
           (source) => !task.input.sources.some((r) => r.id === source.id),
         );
+        if (noteScope && topic.body) {
+          const existing = new Set(topic.sources.map((ref) => ref.id));
+          sources = [
+            ...topic.sources,
+            ...sources.filter((ref) => !existing.has(ref.id)),
+          ];
+          const marker = /\n<!-- generated-sources -->[\s\S]*$/;
+          const original = topic.body.replace(marker, "").trimEnd();
+          const addition = body.replace(marker, "").trim();
+          const sourceList = format("", task.input.template.rules, sources);
+          body =
+            (original.includes(addition)
+              ? original
+              : original + "\n\n" + addition) + sourceList;
+          check(
+            body.length <= MAX_NOTE_CHARS,
+            "合入后笔记章节超长，请为补充内容另建章节",
+          );
+        }
         const conflict =
           scopeConflict ||
           stale ||
@@ -655,7 +735,7 @@ class Store {
             taskId,
             topicId: topic.id,
             baseVersion: baseline?.version ?? 0,
-            body: b.content_md,
+            body,
             sources,
             status: "pending",
             createdAt: Date.now(),
@@ -668,7 +748,7 @@ class Store {
                   : "笔记版本或重排范围需要确认",
           });
         } else {
-          this.writeVersion(s, topic, b.content_md, sources, false);
+          this.writeVersion(s, topic, body, sources, false);
         }
       }
       task.state = "succeeded";
@@ -731,16 +811,27 @@ class Store {
     });
   }
 }
-function validateResult(r, input) {
+function validateResult(r, input, { allowEmpty = false } = {}) {
   check(
     r &&
       r.schema_version === "1" &&
       Array.isArray(r.blocks) &&
-      r.blocks.length > 0 &&
+      (allowEmpty || r.blocks.length > 0) &&
       r.blocks.length <= (input.whole || input.kind === "study" ? 2000 : 50),
     "模型返回格式无效",
   );
   const ids = new Set(input.sources.map((r) => r.id));
+  const required =
+    input.noteScope &&
+    new Set(
+      input.sources
+        .filter((r) =>
+          input.noteScope.requiresSlides
+            ? r.materialRole === "slides"
+            : r.kind === "transcript",
+        )
+        .map((r) => r.id),
+    );
   const seen = new Set();
   for (const b of r.blocks) {
     check(
@@ -759,6 +850,13 @@ function validateResult(r, input) {
         b.source_ids.every((s) => ids.has(s)),
       "模型引用了未授权或不存在的来源",
     );
+    if (required)
+      check(
+        b.source_ids.some((id) => required.has(id)),
+        input.noteScope.requiresSlides
+          ? "模型生成了缺少所选课件依据的笔记章节"
+          : "模型生成了缺少本次课堂转录依据的笔记章节",
+      );
     check(
       ["teacher_explanation", "textbook_supplement", "inference"].includes(
         b.evidence_type,

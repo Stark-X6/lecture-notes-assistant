@@ -85,6 +85,10 @@ const { _electron: electron, expect } = require("@playwright/test"),
     state = await call("snapshot");
     const notebook = state.notebooks[0],
       material = state.materials[0];
+    const book = await call("material.import", {
+      courseId: course.id,
+      kind: "book",
+    });
     const first = await call("lesson.create", {
         courseId: course.id,
         name: "11月6日课堂",
@@ -100,7 +104,10 @@ const { _electron: electron, expect } = require("@playwright/test"),
     for (const l of [first, second])
       await call("lesson.context", {
         lessonId: l.id,
-        context: { slides: { id: material.id, from: 1, to: 1 } },
+        context: {
+          slides: { id: material.id, from: 1, to: 1 },
+          book: { id: book.id },
+        },
       });
     await call("transcript.add", {
       lessonId: second.id,
@@ -120,6 +127,18 @@ const { _electron: electron, expect } = require("@playwright/test"),
       .getByRole("button", { name: "进入课堂" })
       .click();
     await page.waitForSelector(".workspace");
+    await expect(page.getByLabel("笔记结构")).toHaveValue("slides");
+    await expect(page.getByLabel("课程课件范围起始页")).toBeVisible();
+    await expect(page.getByLabel("参考教材页码")).toBeVisible();
+    await expect(page.getByLabel("参考教材范围起始页")).toHaveCount(0);
+    await page.getByLabel("笔记结构").selectOption("book");
+    await expect
+      .poll(
+        async () =>
+          (await call("snapshot")).lessons.find((l) => l.id === second.id)
+            .context.outlineSource,
+      )
+      .toBe("book");
     await page
       .getByRole("button", { name: "自动 · 课后整理", exact: true })
       .click();
@@ -133,10 +152,17 @@ const { _electron: electron, expect } = require("@playwright/test"),
     await page
       .getByRole("button", { name: "整理课堂笔记", exact: true })
       .click();
-    await page.waitForFunction(
-      async () =>
-        (await window.desktop.invoke("snapshot")).candidates.length > 0,
+    await expect
+      .poll(async () => (await call("snapshot")).candidates.length)
+      .toBeGreaterThan(0);
+    await page.locator(".candidate-badge").click();
+    await page.getByRole("button", { name: "应用此主题", exact: true }).click();
+    await page.getByTitle("关闭对话框").click();
+    const saved = (await call("snapshot")).topics.find(
+      (t) => t.noteId === notebook.id,
     );
+    assert.match(saved.body, /!\[示例\]\(attachment:/);
+    assert.match(saved.body, /后续纠正/);
     await page.getByRole("button", { name: "课程空间", exact: true }).click();
     await page.waitForSelector(".course-space");
     assert.equal(

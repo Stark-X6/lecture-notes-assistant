@@ -143,6 +143,34 @@ export function ScopePicker({
     </div>
   );
 }
+export function NoteStructureSelect({
+  context,
+  onChange,
+}: {
+  context: Obj;
+  onChange: (source: string) => void;
+}) {
+  if (!context.slides && !context.book) return null;
+  const canUseBook = context.book && context.book.id !== context.slides?.id;
+  const source =
+    context.outlineSource === "book" && canUseBook
+      ? "book"
+      : context.slides
+        ? "slides"
+        : "transcript";
+  return (
+    <label>
+      笔记结构{" "}
+      <select value={source} onChange={(e) => onChange(e.target.value)}>
+        <option value={context.slides ? "slides" : "transcript"}>
+          {context.slides ? "按课件顺序" : "按课堂讲解"}
+        </option>
+        {canUseBook && <option value="book">按教材顺序</option>}
+      </select>
+    </label>
+  );
+}
+
 export function LessonSetup({
   s,
   course,
@@ -217,14 +245,18 @@ export function LessonSetup({
       </label>
       {["slides", "book"].map((kind) => (
         <label key={kind}>
-          {kind === "slides" ? "课件" : "教材"}及 AI 处理范围
+          {kind === "slides" ? "课件及 AI 处理范围" : "参考教材"}
           <select
             value={context[kind]?.id || ""}
             onChange={(e) => {
               const m = s.materials.find((m: Obj) => m.id === e.target.value);
               setContext({
                 ...context,
-                [kind]: m ? { id: m.id, from: 1, to: m.pages.length } : null,
+                [kind]: m
+                  ? kind === "slides"
+                    ? { id: m.id, from: 1, to: m.pages.length }
+                    : { id: m.id }
+                  : null,
               });
             }}
           >
@@ -237,11 +269,12 @@ export function LessonSetup({
                 </option>
               ))}
           </select>
-          {context[kind] && (
+          {kind === "slides" && context.slides && (
             <div className="range-inputs">
               从{" "}
               <input
                 type="number"
+                aria-label="课件范围起始页"
                 min="1"
                 value={context[kind].from}
                 onChange={(e) =>
@@ -254,6 +287,7 @@ export function LessonSetup({
               到{" "}
               <input
                 type="number"
+                aria-label="课件范围结束页"
                 min={context[kind].from}
                 value={context[kind].to}
                 onChange={(e) =>
@@ -268,6 +302,10 @@ export function LessonSetup({
           )}
         </label>
       ))}
+      <NoteStructureSelect
+        context={context}
+        onChange={(outlineSource) => setContext({ ...context, outlineSource })}
+      />
       <button className="primary" type="submit">
         {lesson ? "保存课堂关联" : "创建课堂"}
       </button>
