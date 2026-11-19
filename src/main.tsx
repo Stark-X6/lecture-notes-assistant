@@ -375,7 +375,9 @@ function App() {
           s.config?.hasTingwuId &&
           s.config?.hasTingwuSecret,
         )
-      : Boolean(s.config?.asrUrl && s.config?.hasAsrKey));
+      : s.config?.asrProvider === "deepseek"
+        ? Boolean(s.config?.hasDeepseekAsrKey)
+        : Boolean(s.config?.asrUrl && s.config?.hasAsrKey));
   const retranscribeReady =
     asrBackend === "local"
       ? localAsrReady
@@ -1105,7 +1107,9 @@ function App() {
                         : localAsrReady
                           ? "已启用"
                           : localAsrLabel)
-                    : "云端语音识别"}
+                    : s.config.asrProvider === "deepseek"
+                      ? "DeepSeek · 分段转写"
+                      : "云端语音识别"}
                 </span>
                 <span>·</span>
                 <button onClick={() => void call("audio.backfill")}>
@@ -1567,7 +1571,9 @@ function App() {
                     确认后会将本课原录音发送至
                     {s.config.asrProvider === "tingwu"
                       ? "阿里云通义听悟"
-                      : "当前云端语音服务"}
+                      : s.config.asrProvider === "deepseek"
+                        ? "DeepSeek"
+                        : "当前云端语音服务"}
                     ，生成一个新的课次并重新转写。原课次的音频、转录和笔记都会保留，云端处理可能产生费用；只有点击下面的确认按钮后才会上传。
                   </p>
                   <p className="help">
@@ -2160,6 +2166,7 @@ function SettingsForm({
       ...config,
       textKey: "",
       asrKey: "",
+      deepseekAsrKey: "",
       asrBackend: configuredBackend,
       asrProvider: config.asrProvider || "openai",
     })),
@@ -2600,7 +2607,7 @@ function SettingsForm({
         <div className="settings-section cloud-asr-settings">
           <h3>
             <Mic size={16} />
-            云端语音识别 <span>选择提供商与实时转写协议</span>
+            云端语音识别 <span>选择语音服务提供商</span>
           </h3>
           <label>
             语音提供商
@@ -2610,6 +2617,7 @@ function SettingsForm({
             >
               <option value="openai">OpenAI Realtime 兼容接口</option>
               <option value="tingwu">阿里云 · 通义听悟</option>
+              <option value="deepseek">DeepSeek · 分段转写</option>
             </select>
           </label>
           {v.asrProvider === "tingwu" ? (
@@ -2661,6 +2669,22 @@ function SettingsForm({
                 听悟只负责语音转写，笔记继续使用上方文本服务。补转写通过听悟按音频时长推流，无需
                 OSS；请先停止本课录音并保持应用打开。
               </p>
+            </>
+          ) : v.asrProvider === "deepseek" ? (
+            <>
+              <p className="help">
+                课堂录音保存后约每 30
+                秒上传一段，字幕在接口返回后显示。结束录音时会提交剩余音频，已导入音频可用「补转写」处理。DeepSeek
+                按音频时长计费。
+              </p>
+              {field(
+                "deepseekAsrKey",
+                "DeepSeek 语音 API 密钥",
+                config.hasDeepseekAsrKey
+                  ? "已保存，留空保留"
+                  : "可填写同一个 DeepSeek 平台 API Key",
+                true,
+              )}
             </>
           ) : (
             <>
@@ -2727,6 +2751,7 @@ function SettingsForm({
               // 文本设置保存时保留独立的语音后端选择。
               asrBackend: configuredBackend,
             });
+            setV((current) => ({ ...current, deepseekAsrKey: "" }));
             setConsent({ text: false, audio: false });
             setMessage("配置已保存。请重新勾选下面的课程授权。");
           })
@@ -2770,7 +2795,9 @@ function SettingsForm({
               ? "本机离线模型（音频不离开电脑）"
               : config.asrProvider === "tingwu"
                 ? "阿里云通义听悟 · 北京"
-                : safeHost(config.asrUrl, "未配置云端语音地址")}
+                : config.asrProvider === "deepseek"
+                  ? "DeepSeek · api.deepseek.com"
+                  : safeHost(config.asrUrl, "未配置云端语音地址")}
             。范围仅包含本课转录、当前选定材料页和笔记上下文。
           </p>
           <label className="checkbox">

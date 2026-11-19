@@ -29,6 +29,7 @@ const {
 } = require("./generation-limits.cjs");
 const { ensureMicrophonePermission } = require("./platform.cjs");
 const { LiveASR } = require("./asr.cjs");
+const deepSeekAudio = require("./deepseek-asr.cjs");
 const { LocalASR } = require("./local-asr.cjs");
 const {
   plan: planLocal,
@@ -37,6 +38,7 @@ const {
 const localForces = new Set();
 let localAsr;
 const localRuns = new Map();
+const deepSeekRuns = new Map();
 
 const { TingwuASR } = require("./tingwu-asr.cjs");
 const { TingwuAPI } = require("./tingwu-api.cjs");
@@ -72,7 +74,10 @@ async function recordingAction(fn) {
 async function cancelBackfills(lids = [...backfills.keys()]) {
   for (const lid of lids) backfills.get(lid)?.abort();
   await Promise.allSettled(
-    lids.map((lid) => backfillTasks.get(lid) || localRuns.get(lid)),
+    lids.map(
+      (lid) =>
+        backfillTasks.get(lid) || localRuns.get(lid) || deepSeekRuns.get(lid),
+    ),
   );
 }
 const root =
@@ -105,6 +110,8 @@ function createASR(lid) {
     return { frame() {}, commit() {}, disconnect() {}, stop() {}, pause() {} };
   const partial = (text) => emit({ type: "partial", lessonId: lid, text });
   const warning = (message) => emit({ type: "warning", message });
+  if (store.s.config.asrProvider === "deepseek")
+    return createDeepSeekRecordingASR(lid, warning);
   if (
     store.s.config.mode === "http" &&
     store.s.config.asrProvider === "tingwu"
@@ -313,6 +320,7 @@ async function startRecording(lid) {
           l.captureMs = m.endMs;
         });
         autoSubmit(lid);
+        if (record?.lid === lid) record.asr.onChunk?.();
         if (store.s.config.asrBackend === "local" && !l.aiPaused)
           void localBackfill(lid, { force: false }).catch((e) =>
             emit({ type: "warning", message: e.message }),
@@ -587,12 +595,168 @@ async function backfillTingwu(lid) {
     backfills.delete(lid);
   }
 }
+function deepSeekAllowed(lid) {
+  const l = store.lesson(lid),
+    c = store.course(l.courseId),
+    cfg = store.s.config;
+  return (
+    !l.deleted &&
+    !l.aiPaused &&
+    cfg.mode === "http" &&
+    cfg.asrProvider === "deepseek" &&
+    cfg.asrBackend === "cloud" &&
+    c.consent.audio &&
+    c.consent.version === cfg.version
+  );
+}
+function createDeepSeekRecordingASR(lid, warn) {
+  const originMs = store.lesson(lid).captureMs;
+  let flushThrough = originMs;
+  let failure;
+  const run = () => {
+    if (!failure && deepSeekAllowed(lid))
+      return deepSeekBackfill(lid, {
+        originMs,
+        flushThrough: () => flushThrough,
+      });
+  };
+  const schedule = () => {
+    void run()?.catch((error) => {
+      if (failure || !deepSeekAllowed(lid) || error.name === "AbortError")
+        return;
+      failure = error;
+      warn(error.message);
+    });
+  };
+  const flush = () => {
+    flushThrough = store.lesson(lid).captureMs;
+  };
+  return {
+    frame() {},
+    onChunk: schedule,
+    commit() {
+      flush();
+      schedule();
+    },
+    disconnect() {
+      backfills.get(lid)?.abort();
+    },
+    async stop() {
+      if (failure) throw failure;
+      flush();
+      await run();
+    },
+  };
+}
+function deepSeekBackfill(lid, live) {
+  if (deepSeekRuns.has(lid)) return deepSeekRuns.get(lid);
+  const operation = runDeepSeekBackfill(lid, live).finally(() => {
+    deepSeekRuns.delete(lid);
+  });
+  deepSeekRuns.set(lid, operation);
+  return operation;
+}
+async function runDeepSeekBackfill(lid, live) {
+  check(!backfills.has(lid), "补转写正在进行");
+  const l = ensureConsent(lid, "audio");
+  const version = store.s.config.version;
+  const secret = key("deepseekAsrKey");
+  check(secret, "请填写 DeepSeek 语音 API 密钥");
+  const controller = new AbortController();
+  const { signal } = controller;
+  backfills.set(lid, controller);
+  const limit = live
+    ? deepSeekAudio.LIVE_SEGMENT_MS
+    : deepSeekAudio.FILE_SEGMENT_MS;
+  const ensureAllowed = () => {
+    signal.throwIfAborted();
+    check(
+      deepSeekAllowed(lid) && version === store.s.config.version,
+      "DeepSeek 转写已停止，音频已保留",
+    );
+  };
+  let count = 0;
+  try {
+    while (true) {
+      ensureAllowed();
+      const chunks = store.s.chunks.filter(
+        (c) =>
+          c.lessonId === lid &&
+          !c.transcribed &&
+          (!live || c.endMs > live.originMs),
+      );
+      const ranges = store.s.streams
+        .filter((s) => s.lessonId === lid)
+        .flatMap((s) => s.confirmed);
+      if (live && live.originMs > 0)
+        ranges.push({ startMs: 0, endMs: live.originMs });
+      const batch = planLocal(chunks, ranges, limit);
+      if (!batch.parts.length) break;
+      const start = batch.parts[0].start;
+      const end = batch.parts.at(-1).end;
+      if (
+        live &&
+        batch.duration < limit - 2 &&
+        end >= l.captureMs - 2 &&
+        live.flushThrough() <= start
+      )
+        break;
+      const transcript = await deepSeekAudio.transcribe(
+        batch.parts,
+        secret,
+        signal,
+        () => reserve(l),
+      );
+      ensureAllowed();
+      store.tx((s) => {
+        const streamId = id();
+        s.streams.push({
+          id: streamId,
+          lessonId: lid,
+          provider: "deepseek",
+          providerVersion: version,
+          originMs: start,
+          confirmed: batch.parts.map((p) => ({
+            startMs: p.start,
+            endMs: p.end,
+          })),
+          recovery: !live,
+        });
+        if (transcript)
+          s.utterances.push({
+            id: id(),
+            lessonId: lid,
+            text: transcript,
+            revision: 1,
+            history: [],
+            startMs: start,
+            endMs: end,
+            timing: "chunk-range",
+            streamId,
+            final: true,
+            topicId: null,
+            createdAt: Date.now(),
+            provider: "deepseek",
+          });
+      });
+      count++;
+      autoSubmit(lid);
+    }
+    return { count, provider: "deepseek" };
+  } finally {
+    backfills.delete(lid);
+  }
+}
 async function backfill(lid) {
   check(!backfills.has(lid), "补转写正在进行");
   const l = ensureConsent(lid, "audio"),
     cfg = clone(store.s.config);
   check(cfg.mode === "http", "请先选择真实 API 并保存语音配置");
   if (cfg.asrProvider === "tingwu") return backfillTingwu(lid);
+  if (cfg.asrProvider === "deepseek") {
+    check(record?.lid !== lid, "请先停止本课录音，再补转写");
+    return deepSeekBackfill(lid);
+  }
   check(cfg.mode === "http" && cfg.fileModel, "请配置文件转写模型");
   const secret = key("asr");
   check(secret, "请填写语音 API 密钥");
@@ -973,6 +1137,8 @@ const routes = {
       if (store.s.config.asrProvider === "tingwu") {
         check(store.s.config.tingwuAppKey, "请先配置听悟项目");
         new TingwuAPI(tingwuCredentials());
+      } else if (store.s.config.asrProvider === "deepseek") {
+        check(key("deepseekAsrKey"), "请填写 DeepSeek 语音 API 密钥");
       } else {
         check(
           store.s.config.fileModel && key("asr"),
@@ -1019,6 +1185,8 @@ const routes = {
           windows: [],
           aiPaused: false,
           createdAt: Date.now(),
+          startedAt: source.startedAt,
+          noteId: source.noteId,
           context: clone(source.context),
           calls: 0,
           sourceLessonId: source.id,
@@ -1029,11 +1197,9 @@ const routes = {
       fs.rmSync(dir, { recursive: true, force: true });
       throw e;
     }
-    const operation = isLocal ? localBackfill(newId) : backfill(newId);
-    backfillTasks.set(newId, operation);
-    void operation
-      .catch((e) => emit({ type: "warning", message: e.message }))
-      .finally(() => backfillTasks.delete(newId));
+    void routes["audio.backfill"]({ lessonId: newId }).catch((e) =>
+      emit({ type: "warning", message: e.message }),
+    );
     return { lessonId: newId };
   },
 
@@ -1092,7 +1258,14 @@ const routes = {
       "自动模式在结束后整理整课；如需课堂分段请切换半自动",
     );
     if (record?.lid === l.id && !a.all && !a.uids) {
-      record.asr.commit();
+      if (record.asr.onChunk) {
+        const current = record;
+        void flushAudio()
+          .then(() => {
+            if (record === current) current.asr.commit();
+          })
+          .catch((error) => emit({ type: "warning", message: error.message }));
+      } else record.asr.commit();
       const cut = record.ms,
         last = Math.max(0, ...l.windows.map((w) => w.end));
       if (cut > last) {
@@ -1254,6 +1427,7 @@ const routes = {
             ).length;
             if (l.writeComplete) l.captureError = null;
           });
+        autoSubmit(l.id, l.recording === "stopped");
         return result;
       })
       .finally(() => backfillTasks.delete(a.lessonId));
@@ -1333,7 +1507,11 @@ const routes = {
     try {
       check(["off", "mock", "http"].includes(a.mode));
       const asrProvider = a.asrProvider || "openai";
-      check(["openai", "tingwu"].includes(asrProvider), "请选择语音提供商");
+      check(
+        ["openai", "tingwu", "deepseek"].includes(asrProvider),
+        "请选择语音提供商",
+      );
+      const deepseekAsrKey = text(a.deepseekAsrKey || "", 2000).trim();
       const tingwuAppKey = text(a.tingwuAppKey || "", 200).trim();
       const tingwuLanguage = a.tingwuLanguage || "cn";
       check(
@@ -1353,6 +1531,11 @@ const routes = {
       }
       if (a.mode === "http") {
         endpoint(a.textUrl);
+        if (asrProvider === "deepseek")
+          check(
+            deepseekAsrKey || store.s.secrets.deepseekAsrKey,
+            "请填写 DeepSeek 语音 API 密钥",
+          );
         if (asrProvider === "openai") {
           endpoint(a.asrUrl, "wss:");
           endpoint(a.fileUrl);
@@ -1378,6 +1561,8 @@ const routes = {
           text(a[k], 2000);
           check(safeStorage.isEncryptionAvailable(), "系统密钥加密不可用");
         }
+      if (deepseekAsrKey)
+        check(safeStorage.isEncryptionAvailable(), "系统密钥加密不可用");
       for (const t of store.s.tasks.filter((t) =>
         ["queued", "running"].includes(t.state),
       ))
@@ -1426,6 +1611,10 @@ const routes = {
         if (a.asrKey)
           s.secrets.asr = safeStorage
             .encryptString(a.asrKey)
+            .toString("base64");
+        if (deepseekAsrKey)
+          s.secrets.deepseekAsrKey = safeStorage
+            .encryptString(deepseekAsrKey)
             .toString("base64");
         for (const k of ["tingwuId", "tingwuSecret"])
           if (a[k]?.trim())

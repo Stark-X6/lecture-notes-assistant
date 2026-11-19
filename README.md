@@ -1,6 +1,6 @@
 # 听课笔记助手 · Windows / macOS 课程空间版
 
-**v0.4.0**，采用纸白、墨黑、苔绿界面；支持按时间段/原始段落范围批量归类转录，顶部提供“整理课堂笔记”主操作（见[界面说明](docs/ui-redesign-v0.4.md)）。保留课程共享资料、多对话、预习复习与课后完整整理；延续大输出上限和可选 DeepSeek 思考模式。
+**v0.5.0** 新增 DeepSeek 云端分段转写。课堂录音约每 30 秒出一批字幕，停止时处理剩余录音。支持已导入音频的补转写和原录音的重新转写。
 
 ## 使用
 
@@ -20,6 +20,8 @@
 
 云端保留通用WSS转录及通义听悟。听悟需AppKey和AccessKey ID/Secret、项目权限及课程音频授权；不是百炼文本模型密钥。使用步骤和遗留任务处理见[听悟接入说明](docs/tingwu-integration.md)。其他厂商专有语音协议仍需对应适配器。
 
+使用 DeepSeek 时，在「API 与设置」切换到「云端 API」并保存语音识别方式，工作模式选「真实 API」，语音提供商选「DeepSeek · 分段转写」。填写 DeepSeek 平台 API Key 并保存配置，然后为课程保存音频授权。若文本服务也使用 DeepSeek，可以在两个密钥字段填写同一个平台 Key。导入 MP3 / WAV 后，点击课堂底部「补转写」。应用会跳过已转写的音频范围，逐段提交剩余部分。接口自动识别语种，按音频时长计费。[DeepSeek 官方 ASR 指南](https://api-docs.deepseek.com/zh-cn/guides/asr)
+
 课程空间底部单独配置文本单价、币种和金额预算。未知用量显示估算，未填预算不限制金额；已填预算但缺价格会暂停文本调用。该预算不包含ASR费用，实际以供应商账单为准。调用次数另行限制。
 
 ## 运行与构建
@@ -34,6 +36,7 @@ npm test
 npm run test:desktop
 npm run test:study
 npm run test:audio
+npm run test:deepseek-asr
 npm run pack
 ```
 
@@ -45,7 +48,7 @@ npm run pack
 | macOS 当前架构 | `npm run pack:mac` | `npm run dist:mac`（DMG + ZIP） |
 | macOS Intel | — | `npm run dist:mac:x64`（待实机验证） |
 
-Windows 输出 `release-v0.4.0/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.4.0/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
+Windows 输出 `release-v0.5.0/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.5.0/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
 
 Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
 

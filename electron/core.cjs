@@ -139,6 +139,7 @@ class Store {
     delete s.secrets;
     s.config.hasTextKey = !!this.s.secrets.text;
     s.config.hasAsrKey = !!this.s.secrets.asr;
+    s.config.hasDeepseekAsrKey = !!this.s.secrets.deepseekAsrKey;
     s.config.hasTingwuId = !!this.s.secrets.tingwuId;
     s.config.hasTingwuSecret = !!this.s.secrets.tingwuSecret;
     s.config.pendingTingwuTasks = s.streams.filter(
