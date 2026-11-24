@@ -49,6 +49,17 @@ import {
   type ClassroomTab,
 } from "./ClassroomTabs";
 import { CourseSpace, LessonSetup, NoteStructureSelect } from "./CourseSpace";
+import {
+  ChapterWorkflow,
+  chapterTaskStatus,
+  type ChapterDrafts,
+} from "./ChapterWorkflow";
+import {
+  CandidateReview,
+  SectionHeading,
+  notebookRows,
+  pagesLabel,
+} from "./NotebookSections";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "./style.css";
@@ -135,12 +146,15 @@ function App() {
     [lid, setLid] = useState(""),
     [tid, setTid] = useState(""),
     [modal, setModal] = useState(""),
+    [chapterNoteId, setChapterNoteId] = useState(""),
+    [courseNoteIds, setCourseNoteIds] = useState<Record<string, string>>({}),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [partial, setPartial] = useState(""),
     [elapsed, setElapsed] = useState(0),
     [selected, setSelected] = useState<string[]>([]),
     [hint, setHint] = useState("");
+  const chapterDrafts = useRef<ChapterDrafts>(new Map());
   const activeTab = classroomTabs[lid] || "slides";
   const selectTab = (tab: ClassroomTab, lessonId = lid) =>
     setClassroomTabs((current) => ({ ...current, [lessonId]: tab }));
@@ -190,18 +204,68 @@ function App() {
     notebook = s?.notebooks.find(
       (n: Obj) => n.id === lesson?.noteId && n.courseId === cid,
     ),
-    topics =
-      s?.topics.filter(
-        (t: Obj) => t.noteId === lesson?.noteId && t.courseId === cid,
-      ) || [],
+    topics = useMemo(
+      () =>
+        s?.topics.filter(
+          (t: Obj) => t.noteId === lesson?.noteId && t.courseId === cid,
+        ) || [],
+      [s?.topics, lesson?.noteId, cid],
+    ),
     topic = topics.find((t: Obj) => t.id === tid),
-    tasks = s?.tasks.filter((t: Obj) => t.lessonId === lid) || [],
+    tasks = useMemo(
+      () => s?.tasks.filter((t: Obj) => t.lessonId === lid) || [],
+      [s?.tasks, lid],
+    ),
     materials = s?.materials.filter((m: Obj) => m.courseId === cid) || [],
     candidates =
       s?.candidates.filter(
         (c: Obj) =>
           topics.some((t: Obj) => t.id === c.topicId) && c.status === "pending",
       ) || [];
+  const chapterNote = s?.notebooks.find(
+    (n: Obj) => n.courseId === cid && n.id === chapterNoteId,
+  );
+  const recentChapterTask = tasks
+    .filter((t: Obj) => t.supplement && t.noteId === notebook?.id)
+    .at(-1);
+  const topicRows = useMemo(
+    () => notebookRows(topics, notebook),
+    [topics, notebook],
+  );
+  const transcriptStates = useMemo(() => {
+    const submitted = new Map<string, string[]>();
+    for (const e of s?.events || [])
+      if (e.type === "submission.created")
+        submitted.set(e.payload.taskId, e.payload.sourceIds);
+    const rejected = new Set(
+      (s?.candidates || [])
+        .filter((c: Obj) => c.status === "rejected")
+        .map((c: Obj) => c.id),
+    );
+    const released = new Set<string>();
+    const states = new Map<string, string>();
+    for (const t of tasks) {
+      if (t.type !== "notes" || t.state !== "succeeded") continue;
+      if (t.supplement && t.noteId !== notebook?.id) continue;
+      for (const id of submitted.get(t.id) || []) {
+        if (!t.supplement) states.set(id, "已整理");
+        else if (!states.has(id)) states.set(id, "未匹配");
+      }
+      if (t.supplement) {
+        const parts = t.contributions || [
+          { sourceIds: t.matchedSourceIds || [] },
+        ];
+        for (const part of parts)
+          for (const id of part.sourceIds) {
+            if (rejected.has(part.candidateId)) released.add(id);
+            else states.set(id, "已整理");
+          }
+      }
+    }
+    for (const id of released)
+      if (states.get(id) !== "已整理") states.set(id, "待提交");
+    return states;
+  }, [tasks, s?.events, s?.candidates, notebook?.id]);
   useEffect(() => {
     if (!s) return;
     if (!course) {
@@ -241,7 +305,16 @@ function App() {
   };
   const call = (method: string, args: Obj = {}) =>
     run(
-      () => invoke(method, { lessonId: lid, ...args }),
+      async () => {
+        const result = await invoke(method, { lessonId: lid, ...args });
+        if (
+          method === "submission.create" &&
+          result?.duplicate &&
+          result.supplement
+        )
+          setNotice("所选内容已提交，沿用原章节补充任务。");
+        return result;
+      },
       !method.startsWith("recording.") && method !== "ai.pause",
     );
   const changeCourse = async (id: string) => {
@@ -254,20 +327,13 @@ function App() {
   };
   const recording = lesson?.recording === "recording",
     paused = lesson?.recording === "paused";
-  const stateOf = (u: Obj) => {
-    const t = tasks.find(
-      (t: Obj) =>
-        t.type === "notes" &&
-        t.state === "succeeded" &&
-        s?.events.some(
-          (e: Obj) =>
-            e.type === "submission.created" &&
-            e.payload.taskId === t.id &&
-            e.payload.sourceIds.includes(`u:${u.id}:${u.revision}`),
-        ),
-    );
-    return t ? "已整理" : "待提交";
-  };
+  const stateOf = (u: Obj) =>
+    transcriptStates.get(`u:${u.id}:${u.revision}`) || "待提交";
+  const openChapter = (id: string) =>
+    void run(async () => {
+      setChapterNoteId(id);
+      setModal("chapter");
+    });
   const importPdf = async (kind: string) => {
     const m = await invoke("material.import", { lessonId: lid, kind });
     if (m?.ext === ".pdf") {
@@ -606,6 +672,11 @@ function App() {
             }}
             onSettings={() => setModal("settings")}
             onTemplate={() => setModal("template")}
+            onChapter={openChapter}
+            noteId={courseNoteIds[cid] || ""}
+            setNoteId={(id) =>
+              setCourseNoteIds((ids) => ({ ...ids, [cid]: id }))
+            }
           />
         ) : !lesson ? (
           <div className="onboarding">
@@ -689,9 +760,11 @@ function App() {
                   title={
                     recording || paused
                       ? "结束录音后整理整课"
-                      : lesson.context.slides
-                        ? `仅整理课件第 ${lesson.context.slides.from}–${lesson.context.slides.to} 页涉及的内容`
-                        : "将本课转录与相关资料整理到笔记"
+                      : notebook?.outline
+                        ? "按已确认的章节骨架补充本课内容"
+                        : lesson.context.slides
+                          ? `仅整理课件第 ${lesson.context.slides.from}–${lesson.context.slides.to} 页涉及的内容`
+                          : "将本课转录与相关资料整理到笔记"
                   }
                   onClick={() =>
                     void call("submission.create", { all: true, prompt: hint })
@@ -831,14 +904,20 @@ function App() {
               <button onClick={() => setModal("lesson-edit")}>
                 课堂日期与共享资料
               </button>
-              <NoteStructureSelect
-                context={lesson.context}
-                onChange={(outlineSource) =>
-                  void call("lesson.context", {
-                    context: { ...lesson.context, outlineSource },
-                  })
-                }
-              />
+              {notebook?.outline ? (
+                <button onClick={() => openChapter(notebook.id)}>
+                  笔记结构 · 已确认 {notebook.outline.topicIds.length} 个章节
+                </button>
+              ) : (
+                <NoteStructureSelect
+                  context={lesson.context}
+                  onChange={(outlineSource) =>
+                    void call("lesson.context", {
+                      context: { ...lesson.context, outlineSource },
+                    })
+                  }
+                />
+              )}
               <label>
                 <input
                   type="checkbox"
@@ -929,6 +1008,14 @@ function App() {
                         </h2>
                       </div>
                       <div className="row gap6">
+                        {notebook && (
+                          <button
+                            className="secondary compact chapter-entry"
+                            onClick={() => openChapter(notebook.id)}
+                          >
+                            {notebook.outline ? "按章节补充" : "建立章节骨架"}
+                          </button>
+                        )}
                         {candidates.length > 0 && (
                           <button
                             className="candidate-badge"
@@ -947,10 +1034,22 @@ function App() {
                       </div>
                     </div>
                     <nav className="topic-tabs" aria-label="笔记章节">
-                      {topics.map((t: Obj) => (
+                      {topicRows.map(({ item: t, parents }) => (
                         <button
                           className={tid === t.id ? "active" : ""}
                           aria-current={tid === t.id ? "location" : undefined}
+                          title={[
+                            ...parents.map((p) => p.title),
+                            t.title,
+                            ...(t.outlineRange
+                              ? [
+                                  pagesLabel(
+                                    t.outlineRange.from,
+                                    t.outlineRange.to,
+                                  ),
+                                ]
+                              : []),
+                          ].join(" › ")}
                           key={t.id}
                           onClick={() =>
                             void run(async () => {
@@ -992,41 +1091,51 @@ function App() {
                       ))}
                     {topics.length ? (
                       <article className="note-scroll">
-                        {topics.map((t: Obj) => (
-                          <section
-                            className="note-section"
-                            id={"note-section-" + t.id}
-                            key={t.id}
-                          >
-                            <h3>{t.title}</h3>
-                            {t.id === tid ? (
-                              <NoteEditor
-                                topic={t}
-                                flushRef={flush}
-                                onError={setNotice}
-                                onSaved={refresh}
+                        {topicRows.map((row) => {
+                          const t = row.item;
+                          return (
+                            <section
+                              className="note-section"
+                              id={"note-section-" + t.id}
+                              key={t.id}
+                            >
+                              <SectionHeading
+                                row={row}
+                                materials={materials}
+                                level={3}
                               />
-                            ) : t.body ? (
-                              <Markdown>{t.body}</Markdown>
-                            ) : (
-                              <p className="muted small">暂无章节内容</p>
-                            )}
-                            {t.sources.length > 0 && (
-                              <details className="sources">
-                                <summary>
-                                  章节来源（{t.sources.length}）
-                                </summary>
-                                {t.sources.map((r: Obj, i: number) => (
-                                  <button key={i} onClick={() => openSource(r)}>
-                                    <span>{i + 1}</span>
-                                    {sourceLabel(r)}
-                                    <ArrowUpRight size={12} />
-                                  </button>
-                                ))}
-                              </details>
-                            )}
-                          </section>
-                        ))}
+                              {t.id === tid ? (
+                                <NoteEditor
+                                  topic={t}
+                                  flushRef={flush}
+                                  onError={setNotice}
+                                  onSaved={refresh}
+                                />
+                              ) : t.body ? (
+                                <Markdown>{t.body}</Markdown>
+                              ) : (
+                                <p className="muted small">暂无章节内容</p>
+                              )}
+                              {t.sources.length > 0 && (
+                                <details className="sources">
+                                  <summary>
+                                    章节来源（{t.sources.length}）
+                                  </summary>
+                                  {t.sources.map((r: Obj, i: number) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => openSource(r)}
+                                    >
+                                      <span>{i + 1}</span>
+                                      {sourceLabel(r)}
+                                      <ArrowUpRight size={12} />
+                                    </button>
+                                  ))}
+                                </details>
+                              )}
+                            </section>
+                          );
+                        })}
                       </article>
                     ) : (
                       <Empty
@@ -1065,6 +1174,12 @@ function App() {
                     busy={busy}
                     paused={!!lesson.aiPaused}
                     automatic={lesson.mode === "auto"}
+                    chapterStatus={
+                      recentChapterTask
+                        ? chapterTaskStatus(recentChapterTask)
+                        : ""
+                    }
+                    onTasks={() => setModal("tasks")}
                     onSubmit={() =>
                       void call("submission.create", {
                         prompt: hint,
@@ -1150,13 +1265,40 @@ function App() {
               template: "课程模板",
               tasks: "处理任务",
               candidates: "候选更新",
+              chapter: "章节笔记",
               history: "笔记版本历史",
               manage: "课程管理",
             }[modal] || "修正转录"
           }
           onClose={() => setModal("")}
-          wide={["settings", "template", "candidates", "tasks"].includes(modal)}
+          wide={[
+            "settings",
+            "template",
+            "candidates",
+            "tasks",
+            "chapter",
+          ].includes(modal)}
         >
+          {modal === "chapter" && chapterNote && (
+            <ChapterWorkflow
+              key={chapterNote.id}
+              s={s}
+              notebook={chapterNote}
+              lesson={
+                view === "classroom" && lesson?.noteId === chapterNote.id
+                  ? lesson
+                  : undefined
+              }
+              selected={selected}
+              drafts={chapterDrafts.current}
+              busy={busy}
+              onRun={run}
+              onSelectTranscript={() => {
+                setModal("");
+                selectTab("transcript");
+              }}
+            />
+          )}
           {["course", "topic", "transcript"].includes(modal) && (
             <InputForm
               multiline={modal === "transcript"}
@@ -1322,16 +1464,22 @@ function App() {
                 <div className="task-card" key={t.id}>
                   <div className="row between">
                     <strong>
-                      {t.type === "template"
-                        ? "AI 起草模板"
-                        : t.type === "preview"
-                          ? "模板预览"
-                          : t.lane === "live"
-                            ? "本段整理"
-                            : "整课整理"}
+                      {t.supplement
+                        ? "章节补充"
+                        : t.type === "outline"
+                          ? "章节骨架"
+                          : t.type === "template"
+                            ? "AI 起草模板"
+                            : t.type === "preview"
+                              ? "模板预览"
+                              : t.lane === "live"
+                                ? "本段整理"
+                                : "整课整理"}
                     </strong>
                     <span className={"task-status " + t.state}>
-                      {statusNames[t.state]}
+                      {t.supplement || t.type === "outline"
+                        ? chapterTaskStatus(t)
+                        : statusNames[t.state]}
                     </span>
                   </div>
                   <p>
@@ -1349,9 +1497,22 @@ function App() {
                     </p>
                   )}
                   {t.error && <div className="inline-error">{t.error}</div>}
+                  {t.supplement && (
+                    <p>
+                      目标笔记 ·{" "}
+                      {s.notebooks.find((n: Obj) => n.id === t.noteId)?.name}
+                    </p>
+                  )}
+                  {t.noMatch && (
+                    <p>
+                      本批资料与转录未匹配已有章节，可调整范围或指定目标章节。
+                    </p>
+                  )}
                   {!!t.introduction?.length && (
                     <details>
-                      <summary>开场导读（{t.introduction.length} 个主题）</summary>
+                      <summary>
+                        开场导读（{t.introduction.length} 个主题）
+                      </summary>
                       {t.introduction.map((block: Obj, i: number) => (
                         <section key={i}>
                           <h4>{block.title}</h4>
@@ -1409,44 +1570,12 @@ function App() {
                       <h3>{t.title}</h3>
                       <span className="tiny-badge">{c.reason}</span>
                     </div>
-                    <div className="comparison">
-                      <div>
-                        <h4>当前笔记 · v{t.version}</h4>
-                        <Markdown>{t.body || "（空白）"}</Markdown>
-                      </div>
-                      <div>
-                        <h4>AI 建议 · 基于 v{c.baseVersion}</h4>
-                        <Markdown>{c.body}</Markdown>
-                      </div>
-                    </div>
-                    {t.version !== c.baseVersion && (
-                      <p className="inline-error">
-                        当前笔记已变化。请重新生成，旧候选不能覆盖新版本。
-                      </p>
-                    )}
-                    <div className="row end">
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          void call("candidate.reject", { id: c.id })
-                        }
-                      >
-                        拒绝
-                      </button>
-                      <button
-                        className="primary compact"
-                        disabled={t.version !== c.baseVersion}
-                        onClick={() =>
-                          void call("candidate.apply", {
-                            id: c.id,
-                            version: t.version,
-                          })
-                        }
-                      >
-                        <Check size={14} />
-                        应用此主题
-                      </button>
-                    </div>
+                    <CandidateReview
+                      candidate={c}
+                      topic={t}
+                      onRun={run}
+                      legacyAction="应用此主题"
+                    />
                   </div>
                 );
               })}

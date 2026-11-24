@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Markdown } from "./Markdown";
+import {
+  CandidateReview,
+  SectionHeading,
+  Sources,
+  notebookRows,
+  type TreeRow,
+} from "./NotebookSections";
 import * as pdfjs from "pdfjs-dist";
 type Obj = Record<string, any>;
 const invoke = (m: string, a: Obj = {}) => window.desktop.invoke(m, a);
@@ -7,33 +14,7 @@ const dateInput = (n: number) => {
   const d = new Date(n);
   return new Date(n - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
-export function Sources({ sources }: { sources: Obj[] }) {
-  return (
-    <details className="source-details">
-      <summary>
-        查看依据 · {sources?.length || 0} 条（存在性已校验，内容支持关系待核对）
-      </summary>
-      {sources?.map((s, i) => (
-        <details key={i}>
-          <summary>
-            {s.name || s.lessonName || "课堂转录"}{" "}
-            {s.page
-              ? `第 ${s.page} 页`
-              : s.startMs != null
-                ? `${Math.floor(s.startMs / 1000)}–${Math.floor(s.endMs / 1000)} 秒`
-                : s.kind === "note"
-                  ? `版本 ${s.revision}`
-                  : "无时间戳"}
-            {s.startedAt
-              ? " · " + new Date(s.startedAt).toLocaleDateString()
-              : ""}
-          </summary>
-          <p>{s.text}</p>
-        </details>
-      ))}
-    </details>
-  );
-}
+export { Sources } from "./NotebookSections";
 export function ScopePicker({
   s,
   cid,
@@ -188,6 +169,7 @@ export function LessonSetup({
     [at, setAt] = useState(dateInput(lesson?.startedAt || Date.now())),
     [noteId, setNoteId] = useState(lesson?.noteId || ""),
     [context, setContext] = useState<Obj>(lesson?.context || {});
+  const outline = s.notebooks.find((n: Obj) => n.id === noteId)?.outline;
   return (
     <form
       className="settings-form lesson-setup"
@@ -302,10 +284,19 @@ export function LessonSetup({
           )}
         </label>
       ))}
-      <NoteStructureSelect
-        context={context}
-        onChange={(outlineSource) => setContext({ ...context, outlineSource })}
-      />
+      {outline ? (
+        <p>
+          这份笔记已有 {outline.topicIds.length}{" "}
+          个骨架章节。本课转录将按这些章节补充。
+        </p>
+      ) : (
+        <NoteStructureSelect
+          context={context}
+          onChange={(outlineSource) =>
+            setContext({ ...context, outlineSource })
+          }
+        />
+      )}
       <button className="primary" type="submit">
         {lesson ? "保存课堂关联" : "创建课堂"}
       </button>
@@ -427,23 +418,24 @@ function Outline({
   );
 }
 function NoteSection({
-  topic,
+  row,
   onRun,
   s,
 }: {
-  topic: Obj;
+  row: TreeRow<Obj>;
   onRun: (fn: () => Promise<any>) => Promise<any>;
   s: Obj;
 }) {
+  const topic = row.item;
   const [draft, setDraft] = useState<string | null>(null),
     [version, setVersion] = useState(topic.version),
     [title, setTitle] = useState(topic.title),
     [parent, setParent] = useState(topic.parentId || "");
   return (
     <section className="note-section">
-      <h4>
-        {topic.title} <small>v{topic.version}</small>
-      </h4>
+      <SectionHeading row={row} materials={s.materials} level={4}>
+        <small>v{topic.version}</small>
+      </SectionHeading>
       {draft === null ? (
         <Markdown>{topic.body || "暂无笔记内容"}</Markdown>
       ) : (
@@ -528,26 +520,7 @@ function NoteSection({
         .map((c: Obj) => (
           <details key={c.id}>
             <summary>待确认候选 · {c.reason}</summary>
-            <Markdown>{c.body}</Markdown>
-            <button
-              onClick={() =>
-                void onRun(() =>
-                  invoke("candidate.apply", {
-                    id: c.id,
-                    version: topic.version,
-                  }),
-                )
-              }
-            >
-              采用候选
-            </button>
-            <button
-              onClick={() =>
-                void onRun(() => invoke("candidate.reject", { id: c.id }))
-              }
-            >
-              拒绝
-            </button>
+            <CandidateReview candidate={c} topic={topic} onRun={onRun} />
           </details>
         ))}
       <details>
@@ -709,6 +682,9 @@ export function CourseSpace({
   onOpen,
   onSettings,
   onTemplate,
+  onChapter,
+  noteId,
+  setNoteId,
 }: {
   s: Obj;
   course: Obj;
@@ -716,12 +692,14 @@ export function CourseSpace({
   onOpen: (id: string) => void;
   onSettings: () => void;
   onTemplate: () => void;
+  onChapter: (noteId: string) => void;
+  noteId: string;
+  setNoteId: (id: string) => void;
 }) {
   const [tab, setTab] = useState("learn"),
     [chatId, setChatId] = useState(""),
     [newLesson, setNewLesson] = useState(false),
     [editLesson, setEditLesson] = useState<Obj | undefined>(),
-    [noteId, setNoteId] = useState(""),
     [notename, setNotename] = useState(""),
     [confirm, setConfirm] = useState(""),
     [deleteId, setDeleteId] = useState(""),
@@ -1246,6 +1224,12 @@ export function CourseSpace({
             {selectedNote && (
               <div className="row">
                 <button
+                  className="primary"
+                  onClick={() => onChapter(selectedNote.id)}
+                >
+                  {selectedNote.outline ? "按章节补充" : "建立章节骨架"}
+                </button>
+                <button
                   onClick={() =>
                     void onRun(() =>
                       invoke("note.create", {
@@ -1274,11 +1258,17 @@ export function CourseSpace({
             {selectedNote && (
               <article className="course-note">
                 <h3>{selectedNote.name}</h3>
-                {s.topics
-                  .filter((t: Obj) => t.noteId === selectedNote.id)
-                  .map((t: Obj) => (
-                    <NoteSection key={t.id} topic={t} onRun={onRun} s={s} />
-                  ))}
+                {notebookRows(
+                  s.topics.filter((t: Obj) => t.noteId === selectedNote.id),
+                  selectedNote,
+                ).map((row) => (
+                  <NoteSection
+                    key={row.item.id}
+                    row={row}
+                    onRun={onRun}
+                    s={s}
+                  />
+                ))}
               </article>
             )}
             {s.artifacts

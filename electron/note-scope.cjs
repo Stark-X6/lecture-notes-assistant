@@ -145,6 +145,28 @@ function relevant(pages, queries, limit) {
     .sort((a, b) => a.page - b.page);
 }
 
+function transcriptRefs(allTurns, lesson, selected) {
+  if (!selected.length) return [];
+  const positions = new Map(
+    allTurns
+      .filter((u) => u.lessonId === lesson.id)
+      .map((u, i) => [u.id, i + 1]),
+  );
+  return selected.map((u) => ({
+    id: `u:${u.id}:${u.revision}`,
+    kind: "transcript",
+    targetId: u.id,
+    revision: u.revision,
+    lessonId: lesson.id,
+    lessonName: lesson.name,
+    startedAt: lesson.startedAt,
+    text: u.text,
+    startMs: u.startMs,
+    endMs: u.endMs,
+    paragraph: positions.get(u.id),
+    topicId: u.topicId,
+  }));
+}
 function pageRefs(material, role, from = 1, to = material.pages.length) {
   return material.pages.slice(from - 1, to).map((body, index) => {
     const page = index + from;
@@ -233,6 +255,7 @@ function structureForSources(input, sources) {
 }
 
 module.exports = {
+  transcriptRefs,
   textbookPages,
   pageRefs,
   relevant,

@@ -78,4 +78,34 @@ function format(body, rules = {}, sources = []) {
   }
   return body;
 }
-module.exports = { format, withoutSourceList };
+function chapterHeadings(notebook, topics, materials) {
+  const members = new Set(notebook.outline?.topicIds || []);
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  const source = materials.find((m) => m.id === notebook.outline?.materialId);
+  return new Map(
+    topics.map((topic) => {
+      let level = 2,
+        parentId = topic.parentId;
+      const seen = new Set([topic.id]);
+      while (
+        members.has(topic.id) &&
+        members.has(parentId) &&
+        byId.has(parentId) &&
+        !seen.has(parentId)
+      ) {
+        seen.add(parentId);
+        level++;
+        parentId = byId.get(parentId).parentId;
+      }
+      let heading = "#".repeat(Math.min(level, 6)) + " " + topic.title;
+      const range = topic.outlineRange;
+      if (members.has(topic.id) && source && range?.materialId === source.id) {
+        const pages =
+          range.from === range.to ? range.from : `${range.from}–${range.to}`;
+        heading += `\n\n> 骨架依据：${source.name}，第 ${pages} 页`;
+      }
+      return [topic.id, heading];
+    }),
+  );
+}
+module.exports = { format, withoutSourceList, chapterHeadings };

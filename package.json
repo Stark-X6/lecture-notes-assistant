@@ -1,6 +1,6 @@
 {
   "name": "lecture-notes-desktop",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "本地优先的听课笔记助手 Windows / macOS 桌面版",
   "author": "Lecture Notes",
@@ -16,6 +16,7 @@
     "dist": "npm run build && electron-builder",
     "test:tingwu": "node tests/tingwu-desktop.cjs",
     "test:deepseek-asr": "node tests/deepseek-asr-desktop.cjs",
+    "test:chapter": "node tests/chapter-workflow-desktop.cjs",
     "test:study": "node tests/study-desktop.cjs",
     "test:audio": "node tests/audio-reliability.cjs",
     "pack:win": "npm run build && electron-builder --win dir --x64",
@@ -59,7 +60,7 @@
     "appId": "cn.lecturenotes.desktop",
     "productName": "听课笔记助手",
     "directories": {
-      "output": "release-v0.7.0"
+      "output": "release-v0.8.0"
     },
     "files": [
       "dist/**/*",

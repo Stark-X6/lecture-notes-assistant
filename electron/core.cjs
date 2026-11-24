@@ -388,6 +388,12 @@ class Store {
     );
     const all = opts.all || opts.preview;
     const context = opts.context || l.context;
+    if (!opts.preview && this.s.notebooks.find((n) => n.id === noteId)?.outline)
+      return require("./chapter-supplement.cjs").prepare(
+        this,
+        { ...opts, courseId: l.courseId, noteId, lessonId: lid },
+        true,
+      );
     let us = this.s.utterances.filter(
       (u) =>
         u.lessonId === lid &&
@@ -397,6 +403,7 @@ class Store {
             (t) =>
               ["queued", "running", "succeeded"].includes(t.state) &&
               t.type === "notes" &&
+              (!t.input?.noteId || t.input.noteId === noteId) &&
               t.input?.utterances.some(
                 (x) => x.id === u.id && x.revision === u.revision,
               ),
@@ -405,22 +412,8 @@ class Store {
     check(us.length, "没有新的定稿内容；可用“整课整理”重新生成");
     if (opts.uids) us = us.filter((u) => opts.uids.includes(u.id));
     check(us.length, "选定范围没有内容");
-    const refs = us.map((u) => ({
-      id: `u:${u.id}:${u.revision}`,
-      kind: "transcript",
-      targetId: u.id,
-      revision: u.revision,
-      lessonId: lid,
-      lessonName: l.name,
-      startedAt: l.startedAt,
-      text: u.text,
-      startMs: u.startMs,
-      endMs: u.endMs,
-      paragraph:
-        this.s.utterances.filter((x) => x.lessonId === lid).indexOf(u) + 1,
-      topicId: u.topicId,
-    }));
     const scope = require("./note-scope.cjs");
+    const refs = scope.transcriptRefs(this.s.utterances, l, us);
     const material = (selection) =>
       selection &&
       this.s.materials.find(
@@ -529,6 +522,16 @@ class Store {
     return input;
   }
   enqueue(lid, opts = {}) {
+    const lesson = this.lesson(lid);
+    const noteId = opts.noteId || lesson.noteId;
+    if (!opts.preview && this.s.notebooks.find((n) => n.id === noteId)?.outline)
+      return require("./chapter-supplement.cjs").enqueue(
+        this,
+        { ...opts, courseId: lesson.courseId, noteId, lessonId: lid },
+        true,
+      );
+    if (opts.outlineStamp)
+      fail("OUTLINE_CHANGED", "章节骨架已变更，请重新提交本段");
     let input;
     try {
       input = this.freeze(lid, opts);
@@ -542,6 +545,7 @@ class Store {
             (t) =>
               t.lessonId === lid &&
               t.type === "notes" &&
+              (!t.input?.noteId || t.input.noteId === noteId) &&
               ["queued", "running"].includes(t.state) &&
               t.input.prompt === (opts.prompt || "") &&
               hash(t.input.context) === hash(l.context) &&
@@ -623,6 +627,13 @@ class Store {
         task.finishedAt = Date.now();
         return;
       }
+      if (task.input.chapterOutline)
+        return require("./chapter-supplement.cjs").apply(this, s, task, result);
+      if (!task.input.migration)
+        check(
+          !s.notebooks.find((n) => n.id === task.input.noteId)?.outline,
+          "目标笔记已启用章节骨架，请按当前骨架重新提交",
+        );
       const noteScope = task.input.noteScope;
       const review = require("./lecture-evidence.cjs");
       const opening = review.introduction(task.input);
@@ -800,10 +811,16 @@ class Store {
     check(c, "候选已处理");
     const t = this.s.topics.find((t) => t.id === c.topicId);
     this.course(t.courseId);
-    if (apply && (t.version !== expected || t.version !== c.baseVersion))
+    if (
+      apply &&
+      (t.version !== expected ||
+        (c.kind !== "append" && t.version !== c.baseVersion))
+    )
       fail("VERSION_CONFLICT", "候选基线已过期，请基于最新笔记重新生成");
     return this.tx((s) => {
-      if (apply) this.writeVersion(s, t, c.body, c.sources, true);
+      if (apply && c.kind === "append")
+        require("./chapter-supplement.cjs").accept(this, t, c);
+      else if (apply) this.writeVersion(s, t, c.body, c.sources, true);
       c.status = apply ? "applied" : "rejected";
     });
   }
@@ -828,8 +845,11 @@ function validateResult(r, input, { allowEmpty = false } = {}) {
     r &&
       r.schema_version === "1" &&
       Array.isArray(r.blocks) &&
-      (allowEmpty || r.blocks.length > 0) &&
-      r.blocks.length <= (input.whole || input.kind === "study" ? 2000 : 50),
+      (allowEmpty || !!input.chapterOutline || r.blocks.length > 0) &&
+      r.blocks.length <=
+        (input.whole || input.kind === "study" || input.chapterOutline
+          ? 2000
+          : 50),
     "模型返回格式无效",
   );
   const ids = new Set(input.sources.map((r) => r.id));
@@ -845,6 +865,23 @@ function validateResult(r, input, { allowEmpty = false } = {}) {
         .map((r) => r.id),
     );
   const seen = new Set();
+  const sectionIds =
+    input.chapterOutline && new Set(input.topics.map((t) => t.id));
+  const primaryIds =
+    sectionIds &&
+    new Set(input.sources.filter((s) => !s.referenceOnly).map((s) => s.id));
+  const scopeSlides =
+    input.chapterOutline?.requiresSlides &&
+    new Set(
+      input.sources.filter((s) => s.materialRole === "slides").map((s) => s.id),
+    );
+  const assigned =
+    sectionIds &&
+    new Map(
+      input.sources
+        .filter((s) => s.kind === "transcript" && sectionIds.has(s.topicId))
+        .map((s) => [s.id, s.topicId]),
+    );
   for (const b of r.blocks) {
     check(
       typeof b.topic_id === "string" &&
@@ -869,6 +906,25 @@ function validateResult(r, input, { allowEmpty = false } = {}) {
           ? "模型生成了缺少所选课件依据的笔记章节"
           : "模型生成了缺少本次课堂转录依据的笔记章节",
       );
+    if (sectionIds) {
+      check(sectionIds.has(b.topic_id), "补充结果超出了指定的章节骨架");
+      if (scopeSlides)
+        check(
+          b.source_ids.some((id) => scopeSlides.has(id)),
+          "补充结果缺少所选课件页依据",
+        );
+      if (!input.context.topicId)
+        check(
+          b.source_ids.every(
+            (id) => !assigned.has(id) || assigned.get(id) === b.topic_id,
+          ),
+          "转录已指定其他小节，请核对章节归属",
+        );
+      check(
+        b.source_ids.some((id) => primaryIds.has(id)),
+        "小节补充必须引用本批选定的材料或转录",
+      );
+    }
     check(
       ["teacher_explanation", "textbook_supplement", "inference"].includes(
         b.evidence_type,

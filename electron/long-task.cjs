@@ -45,17 +45,18 @@ function boundedTopics(topics, sources, size = 18000) {
 }
 async function runLong(store, task, invoke, signal, preview) {
   const input = task.input,
-    size = task.batchSize || 18000,
-    batches = splitSources(
-      input.noteScope
-        ? input.sources.filter((s) => s.materialRole !== "book")
-        : input.sources,
-      size,
-    );
+    size = task.batchSize || 18000;
+  const primary = input.chapterOutline
+    ? input.sources.filter((s) => !s.referenceOnly)
+    : input.noteScope
+      ? input.sources.filter((s) => s.materialRole !== "book")
+      : input.sources;
+  const batches = splitSources(primary, size);
   task.checkpoints ||= {};
   let output = [];
   async function request(label, value) {
     signal.throwIfAborted();
+    task = store.s.tasks.find((job) => job.id === task.id) || task;
     check(task.state === "running", "任务已取消");
     const key = hash({ label, value });
     if (task.checkpoints[key]) return clone(task.checkpoints[key]);
@@ -71,6 +72,7 @@ async function runLong(store, task, invoke, signal, preview) {
       preview,
     );
     signal.throwIfAborted();
+    task = store.s.tasks.find((job) => job.id === task.id) || task;
     check(task.state === "running", "任务已取消");
     validateResult(result, value, {
       allowEmpty: !!value.noteScope && label.startsWith("分析 "),
@@ -87,7 +89,11 @@ async function runLong(store, task, invoke, signal, preview) {
           .map((s) => ({ ...s, text: s.text.slice(-Math.min(2000, size / 4)) }))
       : [];
     const batch = [...overlap, ...batches[i]];
-    const sources = input.noteScope ? scopedBatch(input, batch) : batch;
+    const sources = input.chapterOutline
+      ? [...batch, ...input.sources.filter((s) => s.referenceOnly)]
+      : input.noteScope
+        ? scopedBatch(input, batch)
+        : batch;
     const value = {
       ...input,
       sources,
@@ -97,7 +103,9 @@ async function runLong(store, task, invoke, signal, preview) {
         role: m.role,
         text: m.text.slice(-Math.min(1500, size / 12)),
       })),
-      topics: boundedTopics(input.topics, sources, size),
+      topics: input.chapterOutline
+        ? input.topics
+        : boundedTopics(input.topics, sources, size),
       prompt:
         input.prompt +
         `\n整课分批 ${i + 1}/${batches.length}：按主题组织，保留教师后续纠正、否定和来源；不要根据摘要臆造。`,
@@ -120,7 +128,7 @@ async function runLong(store, task, invoke, signal, preview) {
   for (const [tid, blocks] of groups) {
     const baseline = input.topics.find((t) => t.id === tid);
     let merged =
-      baseline && !input.noteScope
+      baseline && !input.noteScope && !input.chapterOutline
         ? {
             topic_id: tid,
             title: baseline.title,
@@ -163,7 +171,9 @@ async function runLong(store, task, invoke, signal, preview) {
           ],
           context: { topicId: tid },
           provider: undefined,
-          prompt: `${input.prompt}\n归并这一主题，仅返回一个块 topic_id=${tid}。保留原笔记正确内容、人工批注和来源，按课堂顺序采用后续明确纠正，不能简单拼接摘要。新增材料：${b.content_md}`,
+          prompt: input.chapterOutline
+            ? `${input.prompt}\n只归并 targetTopic 的本批补充，返回一个块，保留双方证据。新增材料：${b.content_md}`
+            : `${input.prompt}\n归并这一主题，仅返回一个块 topic_id=${tid}。保留原笔记正确内容、人工批注和来源，按课堂顺序采用后续明确纠正，不能简单拼接摘要。新增材料：${b.content_md}`,
         },
       );
       check(

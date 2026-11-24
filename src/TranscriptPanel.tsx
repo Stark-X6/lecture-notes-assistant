@@ -40,6 +40,8 @@ type Props = {
   busy: boolean;
   paused: boolean;
   automatic: boolean;
+  chapterStatus: string;
+  onTasks: () => void;
   onSubmit: () => void;
 };
 export function TranscriptPanel(p: Props) {
@@ -124,7 +126,7 @@ export function TranscriptPanel(p: Props) {
     p.items.map((item, index) => [item.id, index + 1]),
   );
   const pending = p.items.filter(
-    (item) => item.final && p.stateOf(item) !== "已整理",
+    (item) => item.final && p.stateOf(item) === "待提交",
   ).length;
   useLayoutEffect(() => {
     if (!rangeOpen) return;
@@ -535,6 +537,14 @@ export function TranscriptPanel(p: Props) {
         )}
       </div>
       <div className="submit-area">
+        {p.chapterStatus && (
+          <div className="chapter-submit-status">
+            <span role="status">最近一批章节补充 · {p.chapterStatus}</span>
+            <button className="text-button" onClick={p.onTasks}>
+              查看任务
+            </button>
+          </div>
+        )}
         <input
           aria-label="笔记整理要求"
           value={p.hint}

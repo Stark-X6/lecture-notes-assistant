@@ -451,6 +451,246 @@ button.organize-main {
 .note-scroll {
   padding: 10px 20px 18px;
 }
+.chapter-entry {
+  white-space: nowrap;
+}
+.chapter-submit-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chapter-heading {
+  padding-inline-start: calc(var(--chapter-depth, 0) * 12px);
+  padding-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.chapter-heading :is(h3, h4, h5, h6) {
+  margin: 4px 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+.chapter-heading small,
+.chapter-workflow small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: normal;
+}
+.chapter-path {
+  display: block;
+}
+.chapter-workflow {
+  color: var(--ink);
+  font-size: 13px;
+}
+.chapter-workflow h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.chapter-workflow > h3 {
+  font: 600 22px / 1.4 var(--display);
+}
+.chapter-binding,
+.chapter-workflow .help {
+  margin: 4px 0 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.chapter-stages {
+  display: flex;
+  gap: 20px;
+  margin: 12px 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.chapter-stages button {
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--muted);
+  padding: 8px 0;
+}
+.chapter-stages button[aria-pressed="true"] {
+  font-weight: 650;
+  border-bottom-color: var(--accent);
+  color: var(--accent-dark);
+}
+.chapter-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  align-content: start;
+}
+.chapter-fields label:not(.chapter-check),
+.field-caption {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.field-caption {
+  margin-bottom: 4px;
+}
+.chapter-fields :is(input:not([type="checkbox"]), select, textarea) {
+  max-width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  font: inherit;
+  color: var(--ink);
+}
+.chapter-primary-range,
+.chapter-source-range,
+.chapter-range,
+.chapter-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chapter-primary-range {
+  align-items: end;
+  gap: 20px;
+}
+.chapter-draft-history {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.chapter-range input[type="number"] {
+  width: 76px;
+}
+.chapter-workflow fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.chapter-workflow legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+.chapter-source + .chapter-source,
+.chapter-utterances .chapter-check + .chapter-check {
+  margin-top: 8px;
+}
+.chapter-source-range {
+  padding: 5px 0 2px 24px;
+}
+.chapter-source > button,
+.chapter-row-actions button,
+.chapter-task button,
+.chapter-preview > .row > button:not(.primary) {
+  color: var(--accent-dark);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.chapter-source > button {
+  margin-top: 6px;
+}
+.chapter-utterances {
+  max-height: 180px;
+  overflow: auto;
+}
+.historical-range {
+  margin: 8px 0;
+}
+.historical-range summary {
+  cursor: pointer;
+  color: var(--accent-dark);
+}
+.historical-range .chapter-range {
+  padding: 6px 0;
+}
+.historical-range input {
+  width: 92px;
+}
+.chapter-utterances .chapter-check {
+  flex-wrap: nowrap;
+  align-items: baseline;
+}
+.chapter-preview,
+.chapter-history {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.chapter-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin: 12px 0 16px;
+}
+.chapter-tree {
+  max-height: 290px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  align-self: start;
+}
+.chapter-tree button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 8px 8px 8px calc(9px + var(--chapter-depth) * 12px);
+  color: var(--ink);
+  border-radius: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.chapter-tree small {
+  white-space: nowrap;
+}
+.chapter-tree button[aria-pressed="true"] {
+  background: var(--tint);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.chapter-preview .row,
+.chapter-fields > .row {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chapter-task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}
+.chapter-task strong,
+.chapter-receipt {
+  color: var(--accent-dark);
+}
+.chapter-task .inline-error {
+  flex-basis: 100%;
+}
+.chapter-review,
+.chapter-history-item {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+.chapter-review summary,
+.chapter-history > summary {
+  cursor: pointer;
+}
+.studio-column .comparison {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 650px) {
+  .chapter-split {
+    grid-template-columns: 1fr;
+  }
+  .chapter-tree {
+    max-height: 160px;
+  }
+}
 .statusbar {
   min-height: 32px;
   color: #687461;

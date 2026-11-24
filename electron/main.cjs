@@ -441,7 +441,7 @@ function autoSubmit(lid, tail = false) {
     const us = store.s.utterances.filter(
       (u) => u.lessonId === lid && u.endMs > w.start && u.startMs < w.end,
     );
-    if (us.some((u) => u.needsReview)) continue;
+    if (us.some((u) => !u.final || u.needsReview)) continue;
     try {
       if (us.length)
         store.enqueue(lid, {
@@ -452,14 +452,29 @@ function autoSubmit(lid, tail = false) {
           submittedAt: w.submittedAt,
           baseline: w.baseline,
           noteId: w.noteId,
+          ...(Object.hasOwn(w, "outlineStamp")
+            ? { outlineStamp: w.outlineStamp }
+            : {}),
         });
       store.tx(() => (w.state = us.length ? "submitted" : "silence"));
     } catch (e) {
       if (
         e.message.includes("没有新的") ||
         e.message.includes("选定范围没有内容")
-      )
+      ) {
         store.tx(() => (w.state = "submitted"));
+      } else if (
+        ["OUTLINE_CHANGED", "INVALID_INPUT", "NOT_FOUND"].includes(e.code)
+      ) {
+        store.tx(() => {
+          w.state = "failed";
+          w.error = e.message;
+        });
+        emit({
+          type: "warning",
+          message: e.message + "。可在转录页重新选择该段提交。",
+        });
+      }
     }
   }
 }
@@ -937,6 +952,11 @@ async function exportNotes(lid) {
     c = store.course(l.courseId);
   const notebook = store.s.notebooks.find((n) => n.id === l.noteId);
   const topics = clone(store.lessonTopics(lid));
+  const headings = require("./presentation.cjs").chapterHeadings(
+    notebook,
+    topics,
+    store.s.materials,
+  );
   const result = await dialog.showOpenDialog(win, {
     title: "选择导出目录",
     properties: ["openDirectory", "createDirectory"],
@@ -956,7 +976,7 @@ async function exportNotes(lid) {
       require("./presentation.cjs").withoutSourceList(t.body, t.sources),
       temp,
     );
-    body += `## ${t.title}\n\n${exported.body}\n\n`;
+    body += `${headings.get(t.id)}\n\n${exported.body}\n\n`;
     if (exported.missing.length)
       body += "> 缺失附件：" + exported.missing.join("、") + "\n\n";
     if (t.sources.length) {
@@ -1280,14 +1300,21 @@ const routes = {
       const cut = record.ms,
         last = Math.max(0, ...l.windows.map((w) => w.end));
       if (cut > last) {
+        const outlineStamp = require("./chapter-supplement.cjs").stamp(
+          store,
+          l.noteId,
+        );
         const w = {
           start: last,
           end: cut,
           state: "waiting",
           context: clone(l.context),
           template: clone(store.course(l.courseId).template),
-          baseline: clone(store.lessonTopics(l.id)),
+          ...(outlineStamp
+            ? {}
+            : { baseline: clone(store.lessonTopics(l.id)) }),
           noteId: l.noteId,
+          outlineStamp,
           prompt: text(a.prompt || "", 4000),
           submittedAt: Date.now(),
         };

@@ -2,6 +2,7 @@ const fs = require("node:fs"),
   path = require("node:path");
 const { id, clone, check, text, atomicWrite } = require("./core.cjs");
 const attachment = require("./attachments.cjs");
+const notebookOutline = require("./notebook-outline.cjs");
 const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
 function routes(context) {
   const get = () => context();
@@ -25,7 +26,11 @@ function routes(context) {
       return store.deleteLesson(l.id);
     },
     "notebook.create": (a) => get().store.newNotebook(a.courseId, a.name),
+    "notebook.outlineDraft": (a) => notebookOutline.draft(get().store, a),
+    "notebook.outlineApply": (a) => notebookOutline.apply(get().store, a),
     "conversation.save": (a) => get().store.conversation(a),
+    "notebook.supplement": (a) =>
+      require("./chapter-supplement.cjs").enqueue(get().store, a),
     "study.generate": (a) => get().store.enqueueStudy(a),
     "material.outline": (a) => get().store.outline(a),
     "material.outlineSave": (a) => {
@@ -57,15 +62,35 @@ function routes(context) {
           parent = a.nodes.find((x) => x.id === parent)?.parentId;
         }
       }
-      store.tx(() => (m.outline = clone(a.nodes)));
+      store.tx(() => {
+        m.outline = clone(a.nodes);
+        m.editedOutlineHash = require("./core.cjs").hash(m.outline);
+      });
     },
     "topic.structure": (a) => {
       const { store } = get(),
         t = store.s.topics.find((t) => t.id === a.id);
       check(t);
       store.course(t.courseId);
+      check(t.noteId === a.noteId, "标题不属于当前笔记");
+      const notebook = store.s.notebooks.find(
+        (n) => n.id === t.noteId && n.courseId === t.courseId,
+      );
+      const title = text(a.title, 120).trim();
+      check(title, "请输入章节标题");
+      if (notebook?.outline?.topicIds.includes(t.id))
+        return notebookOutline.editBoundHeading(
+          store,
+          notebook,
+          t,
+          title,
+          a.parentId || null,
+        );
       const parent = store.s.topics.find(
-        (t) => t.id === a.parentId && t.noteId === a.noteId,
+        (p) =>
+          p.id === a.parentId &&
+          p.noteId === t.noteId &&
+          p.courseId === t.courseId,
       );
       check(!a.parentId || (parent && parent.id !== t.id), "父主题无效");
       const seen = new Set([t.id]);
@@ -76,7 +101,7 @@ function routes(context) {
         p = store.s.topics.find((x) => x.id === p.parentId);
       }
       store.tx(() => {
-        t.title = text(a.title, 120);
+        t.title = title;
         t.parentId = a.parentId || null;
       });
     },
@@ -169,9 +194,14 @@ function routes(context) {
         );
         check(notebook);
         items = clone(store.s.topics.filter((t) => t.noteId === notebook.id));
+        const headings = require("./presentation.cjs").chapterHeadings(
+          notebook,
+          items,
+          store.s.materials,
+        );
         markdown = [
           "# " + notebook.name,
-          ...items.map((t) => "## " + t.title + "\n\n" + t.body),
+          ...items.map((t) => headings.get(t.id) + "\n\n" + t.body),
         ].join("\n\n");
       } else {
         const item = store.s.artifacts.find(
