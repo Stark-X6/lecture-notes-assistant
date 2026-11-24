@@ -3,6 +3,12 @@ const path = require("node:path");
 const { randomUUID, createHash } = require("node:crypto");
 const initSql = require("sql.js");
 const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
+const {
+  encryptedTextKey,
+  migrateTextSettings,
+  textProfile,
+} = require("./text-settings.cjs");
+const textProviders = require("./text-providers.json");
 const id = () => randomUUID();
 const hash = (x) =>
   createHash("sha256").update(JSON.stringify(x)).digest("hex");
@@ -44,7 +50,8 @@ function initial() {
     config: {
       mode: "off",
       asrBackend: "local",
-      textUrl: "https://api.openai.com/v1/chat/completions",
+      textProvider: "openai",
+      textUrl: textProviders.openai.url,
       textModel: "",
       textThinking: false,
       asrUrl: "wss://api.openai.com/v1/realtime?intent=transcription",
@@ -108,6 +115,7 @@ class Store {
     // local ASR as the safe default; databases created by the older cloud
     // branch (which had no asrBackend field) keep their HTTP cloud behavior.
     const hadAsrBackend = Object.hasOwn(state.config || {}, "asrBackend");
+    migrateTextSettings(state);
     this.s.config = { ...initial().config, ...state.config };
     if (!hadAsrBackend) this.s.config.asrBackend = "cloud";
     require("./study.cjs").migrate(this.s);
@@ -137,7 +145,13 @@ class Store {
   snapshot() {
     const s = clone(this.s);
     delete s.secrets;
-    s.config.hasTextKey = !!this.s.secrets.text;
+    s.config.textProfiles = {
+      ...s.textProfiles,
+      [s.config.textProvider]: textProfile(s.config),
+    };
+    delete s.textProfiles;
+    s.config.textKeyScopes = Object.keys(this.s.secrets.textKeys || {});
+    s.config.hasTextKey = !!encryptedTextKey(this.s, s.config);
     s.config.hasAsrKey = !!this.s.secrets.asr;
     s.config.hasDeepseekAsrKey = !!this.s.secrets.deepseekAsrKey;
     s.config.hasTingwuId = !!this.s.secrets.tingwuId;

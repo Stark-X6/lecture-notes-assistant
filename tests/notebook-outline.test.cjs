@@ -337,6 +337,7 @@ test("云端大纲经过课程授权与预算，分批仅发送选定主资料�
   const { store, course, material, draft, apply } = await fixture(t);
   store.s.config.mode = "http";
   store.s.config.textModel = "fixture";
+  store.s.config.textProvider = "compatible";
   store.s.config.textUrl = "https://example.invalid/chat";
   const lesson = store.createLesson(course.id, "无关课堂");
   store.addUtterance(lesson.id, "绝不能发送的转录");

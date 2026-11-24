@@ -24,6 +24,12 @@ const {
 } = require("./core.cjs");
 const { Scheduler, endpoint, generate } = require("./provider.cjs");
 const {
+  textTarget,
+  textCredential,
+  encryptedTextKey,
+  textProfile,
+} = require("./text-settings.cjs");
+const {
   MIN_OUTPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
 } = require("./generation-limits.cjs");
@@ -98,8 +104,19 @@ function broadcast() {
       emit({ type: "changed" });
     }, 150);
 }
-function key(kind) {
-  const secret = store.s.secrets[kind];
+function key(kind, config = store.s.config) {
+  let secret;
+  if (kind === "text") {
+    if (config.mode !== "http") return "";
+    check(
+      config.version === store.s.config.version &&
+        textCredential(config) === textCredential(store.s.config),
+      "文本服务已变更，请按当前配置重新生成任务",
+    );
+    secret = encryptedTextKey(store.s, config);
+  } else {
+    secret = store.s.secrets[kind];
+  }
   return secret ? safeStorage.decryptString(Buffer.from(secret, "base64")) : "";
 }
 function tingwuCredentials() {
@@ -976,7 +993,14 @@ async function exportNotes(lid) {
       require("./presentation.cjs").withoutSourceList(t.body, t.sources),
       temp,
     );
-    body += `${headings.get(t.id)}\n\n${exported.body}\n\n`;
+    const heading = headings.get(t.id);
+    const content = notebook.outline
+      ? require("./presentation.cjs").nestMarkdown(
+          exported.body,
+          heading.match(/^#+/)[0].length,
+        )
+      : exported.body;
+    body += `${heading}\n\n${content}\n\n`;
     if (exported.missing.length)
       body += "> 缺失附件：" + exported.missing.join("、") + "\n\n";
     if (t.sources.length) {
@@ -1247,6 +1271,11 @@ const routes = {
   "lesson.context": (a) => store.setContext(a.lessonId, a.context),
   "lesson.consent": async (a) => {
     const c = store.course(a.courseId || store.lesson(a.lessonId).courseId);
+    check(
+      a.configVersion === undefined ||
+        a.configVersion === store.s.config.version,
+      "API 配置已变化，请核对发送目标后重新授权",
+    );
     store.tx(() => {
       c.consent = {
         text: !!a.text,
@@ -1544,6 +1573,14 @@ const routes = {
     configuring = true;
     try {
       check(["off", "mock", "http"].includes(a.mode));
+      const target = textTarget(a);
+      const scope = textCredential(a);
+      const textKey = text(a.textKey || "", 2000).trim();
+      if (a.mode === "http" || textKey || target.url)
+        check(
+          scope,
+          "请填写有效的 HTTPS 文本请求地址，地址中不能包含账号或密码",
+        );
       const asrProvider = a.asrProvider || "openai";
       check(
         ["openai", "tingwu", "deepseek"].includes(asrProvider),
@@ -1556,7 +1593,9 @@ const routes = {
         ["cn", "en", "fspk", "ja", "yue"].includes(tingwuLanguage),
         "不支持的听悟语种",
       );
-      if (asrProvider === "tingwu" && a.mode === "http") {
+      const cloudAudio =
+        store.s.config.asrBackend === "cloud" && a.mode === "http";
+      if (asrProvider === "tingwu" && cloudAudio) {
         check(tingwuAppKey, "请填写听悟项目 AppKey");
         check(
           a.tingwuId?.trim() || store.s.secrets.tingwuId,
@@ -1567,8 +1606,7 @@ const routes = {
           "请填写听悟 AccessKey Secret",
         );
       }
-      if (a.mode === "http") {
-        endpoint(a.textUrl);
+      if (cloudAudio) {
         if (asrProvider === "deepseek")
           check(
             deepseekAsrKey || store.s.secrets.deepseekAsrKey,
@@ -1622,11 +1660,14 @@ const routes = {
         );
       }
       store.tx((s) => {
+        s.textProfiles ||= {};
+        s.textProfiles[s.config.textProvider] = textProfile(s.config);
         s.config = {
           mode: a.mode,
           asrBackend: s.config.asrBackend || "cloud",
           localAsrModel: s.config.localAsrModel || "sensevoice",
-          textUrl: a.textUrl,
+          textProvider: target.provider,
+          textUrl: target.url,
           textModel: a.textModel,
           textThinking: a.textThinking === true,
           asrUrl: a.asrUrl,
@@ -1642,10 +1683,12 @@ const routes = {
           pricing: s.config.pricing,
           version: s.config.version + 1,
         };
-        if (a.textKey)
-          s.secrets.text = safeStorage
-            .encryptString(a.textKey)
+        if (textKey) {
+          s.secrets.textKeys ||= {};
+          s.secrets.textKeys[scope] = safeStorage
+            .encryptString(textKey)
             .toString("base64");
+        }
         if (a.asrKey)
           s.secrets.asr = safeStorage
             .encryptString(a.asrKey)
@@ -1710,6 +1753,11 @@ const routes = {
   "provider.test": async (a) => {
     const course = store.course(
       a.courseId || store.lesson(a.lessonId).courseId,
+    );
+    check(
+      a.configVersion === undefined ||
+        a.configVersion === store.s.config.version,
+      "API 配置已变化，请核对发送目标后重新测试",
     );
     check(
       course.consent.text && course.consent.version === store.s.config.version,

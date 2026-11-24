@@ -1,0 +1,26 @@
+{
+  "openai": {
+    "label": "OpenAI",
+    "protocol": "Responses API",
+    "url": "https://api.openai.com/v1/responses",
+    "modelHint": "例如 gpt-5.4-mini"
+  },
+  "anthropic": {
+    "label": "Anthropic Claude",
+    "protocol": "Messages API",
+    "url": "https://api.anthropic.com/v1/messages",
+    "modelHint": "例如 claude-sonnet-5-5"
+  },
+  "deepseek": {
+    "label": "DeepSeek",
+    "protocol": "Chat Completions",
+    "url": "https://api.deepseek.com/chat/completions",
+    "modelHint": "填写 DeepSeek 平台的模型 ID"
+  },
+  "compatible": {
+    "label": "自定义兼容服务",
+    "protocol": "Chat Completions",
+    "url": "",
+    "modelHint": "填写服务商提供的模型 ID"
+  }
+}

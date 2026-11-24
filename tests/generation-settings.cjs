@@ -2,8 +2,16 @@
 const { _electron: electron, expect } = require("@playwright/test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { Store } = require("../electron/core.cjs");
 (async () => {
   const data = path.resolve(".test-data", "generation-settings-" + Date.now());
+  const previous = await Store.open(data);
+  previous.tx((s) => {
+    delete s.config.textProvider;
+    s.config.textUrl = "https://api.deepseek.com/chat/completions";
+    s.config.maxOutput = 300000;
+  });
+  previous.db.close();
   const launch = () =>
     electron.launch({
       ...(process.env.LECTURE_EXECUTABLE
@@ -22,6 +30,7 @@ const path = require("node:path");
       await window.desktop.invoke("provider.configure", {
         ...config,
         mode: "off",
+        textProvider: "deepseek",
         textUrl: "https://api.deepseek.com/chat/completions",
         textModel: "deepseek-flash",
         maxOutput: 300000,
@@ -64,6 +73,29 @@ const path = require("node:path");
     });
     await expect(limit).toHaveValue("300000");
     await expect(thinking).toBeChecked();
+    const provider = page.getByLabel("文本提供商", { exact: true });
+    await provider.selectOption("openai");
+    await expect(limit).toHaveValue("8192");
+    await provider.selectOption("anthropic");
+    await expect(limit).toHaveValue("8192");
+    await limit.fill("24000");
+    await page
+      .getByRole("button", { name: "保存 API 配置", exact: true })
+      .click();
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          async () =>
+            (await window.desktop.invoke("snapshot")).config.maxOutput,
+        ),
+      )
+      .toBe(24000);
+    await provider.selectOption("deepseek");
+    await expect(limit).toHaveValue("300000");
+    await expect(thinking).toBeChecked();
+    await provider.selectOption("anthropic");
+    await expect(limit).toHaveValue("24000");
+    await provider.selectOption("deepseek");
     await limit.fill("393216");
     await thinking.uncheck();
     await page
@@ -72,6 +104,14 @@ const path = require("node:path");
     await page
       .getByText("配置已保存。请重新勾选下面的课程授权。", { exact: true })
       .waitFor();
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          async () =>
+            (await window.desktop.invoke("snapshot")).config.maxOutput,
+        ),
+      )
+      .toBe(393216);
     const after = await page.evaluate(() => window.desktop.invoke("snapshot"));
     assert.equal(after.config.maxOutput, 393216);
     assert.equal(after.config.textThinking, false);
@@ -84,13 +124,14 @@ const path = require("node:path");
     );
     assert.equal(restored.config.maxOutput, 393216);
     assert.equal(restored.config.textThinking, false);
+    assert.equal(restored.config.textProfiles.anthropic.maxOutput, 24000);
     assert.equal(
       restored.tasks.length,
       0,
       "settings checks must not call a model",
     );
     console.log(
-      "PASS: 300000/393216 tokens, thinking toggle, invalid boundaries, UI save and restart persistence",
+      "PASS: 300000/393216 tokens, native defaults, per-provider limits, thinking toggle, invalid boundaries and restart",
     );
   } finally {
     await application.close().catch(() => {});

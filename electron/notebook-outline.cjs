@@ -441,8 +441,49 @@ async function runOutline(store, task, invoke, signal) {
     }
     stitch(roots, forest(rows));
   }
-  const sections = sectionsInRange(linear(roots, { canonical: true }), primary);
+  const sections = sectionsInRange(
+    completeClosingSection(
+      linear(roots, { canonical: true }),
+      sources,
+      primary,
+    ),
+    primary,
+  );
   return { method: "model", sections };
+}
+
+function completeClosingSection(rows, sources, primary) {
+  if (primary.role !== "slides" || !rows.length) return rows;
+  const closing = /^(?:(?:本章|章节)?(?:小结|总结)|(?:chapter\s+)?summary)$/iu;
+  const marker = scan(sources).markers.at(-1);
+  if (!marker || !closing.test(marker.title)) return rows;
+  if (
+    rows.some(
+      (s) =>
+        s.to >= marker.page &&
+        /小结|总结|回顾|\bsummary\b|\breview\b/iu.test(s.title),
+    )
+  )
+    return rows;
+  // Only supplement a recognisable tail. An internal recap is not the end of
+  // a chapter, and a multipage selection may contain several separate units.
+  const last = rows.at(-1);
+  if (last.from > marker.page || last.to < marker.page - 1) return rows;
+  const roots = rows.filter((s) => s.parentKey === null);
+  const parent = roots.length === 1 && rows.length > 1 ? roots[0] : null;
+  const key =
+    "closing-" + hash([marker.title, marker.page, primary.to]).slice(0, 24);
+  if (rows.some((s) => s.key === key)) return rows;
+  return [
+    ...rows.map((s) => (s === parent ? { ...s, to: primary.to } : s)),
+    {
+      key,
+      title: marker.title,
+      parentKey: parent?.key || null,
+      from: marker.page,
+      to: primary.to,
+    },
+  ];
 }
 
 function publish(store, task, result) {
@@ -635,4 +676,12 @@ function editBoundHeading(store, notebook, topic, title, parentId) {
   });
 }
 
-module.exports = { RULES, draft, apply, runOutline, publish, editBoundHeading };
+module.exports = {
+  RULES,
+  draft,
+  apply,
+  runOutline,
+  publish,
+  editBoundHeading,
+  completeClosingSection,
+};

@@ -252,6 +252,7 @@ test("真实请求契约使用局部章节和来源标识，保留层级并拒�
   const cfg = {
     ...task.input.provider,
     mode: "http",
+    textProvider: "compatible",
     textUrl: "https://example.org/chat",
     textModel: "fixture",
   };

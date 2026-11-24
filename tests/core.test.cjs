@@ -237,6 +237,55 @@ test("API 地址只允许 HTTPS/WSS，禁止凭据内嵌", () => {
   assert.throws(() => endpoint("https://user:pass@example.com"));
   assert.equal(endpoint("https://example.com"), "https://example.com/");
 });
+test("重新授权新服务后，排队的旧服务任务不会取密钥或发送资料", async (t) => {
+  const { store, c, l } = await fixture(t);
+  Object.assign(store.s.config, { mode: "http", textProvider: "openai" });
+  const task = store.enqueue(l.id);
+  store.s.config.textProvider = "anthropic";
+  store.s.config.version++;
+  Object.assign(c.consent, { text: true, version: store.s.config.version });
+  let lookups = 0;
+  const scheduler = new Scheduler(
+    store,
+    () => {
+      lookups++;
+      return "fixture";
+    },
+    async () => ({}),
+  );
+  t.after(() => scheduler.close());
+  await scheduler.run(task);
+  assert.equal(lookups, 0);
+  assert.equal(task.requests || 0, 0);
+  assert.equal(task.state, "failed");
+  assert.match(task.error, /授权|配置/);
+});
+test("每个分批从任务快照取密钥，撤回课程授权后不发送下一批", async (t) => {
+  const { store, c, l, topic } = await fixture(t);
+  Object.assign(store.s.config, { mode: "http", textProvider: "anthropic" });
+  Object.assign(c.consent, { text: true, version: store.s.config.version });
+  const task = store.enqueue(l.id, { all: true });
+  task.batchSize = 5;
+  const scopes = [];
+  const scheduler = new Scheduler(
+    store,
+    (kind, config) => {
+      scopes.push([kind, config?.textProvider]);
+      return "fixture";
+    },
+    async (_, key, batch) => {
+      assert.equal(key, "fixture");
+      c.consent.text = false;
+      return result({ input: batch }, topic);
+    },
+  );
+  t.after(() => scheduler.close());
+  await scheduler.run(task);
+  assert.deepEqual(scopes, [["text", "anthropic"]]);
+  assert.equal(task.requests, 1);
+  assert.equal(task.state, "failed");
+  assert.match(task.error, /授权/);
+});
 test("连续点击同一提交点复用进行中任务", async (t) => {
   const { store, l } = await fixture(t);
   const a = store.enqueue(l.id);

@@ -1,6 +1,6 @@
 # 听课笔记助手 · Windows / macOS 课程空间版
 
-**v0.8.0** 支持先从课件或教材建立章节骨架，再把选定页或课堂转录分批写入同一章。课堂工作区提供课件、教材、笔记、转录四个标签页。每次展开一页，切换时保留当前课堂的阅读位置、笔记编辑状态和转录选择。录音与整理任务在后台继续。
+**v0.9.0** 支持用 DeepSeek、OpenAI Responses、Anthropic Messages 或自定义 Chat Completions 服务生成笔记。可以先从课件或教材建立章节骨架，再把选定页或课堂转录分批写入同一章。课堂工作区提供课件、教材、笔记、转录四个标签页。每次展开一页，切换时保留当前课堂的阅读位置、笔记编辑状态和转录选择。录音与整理任务在后台继续。
 
 ## 使用
 
@@ -26,7 +26,8 @@
 
 ## API 与本地识别
 
-设置中填写文本生成的Chat Completions兼容HTTPS地址、模型和密钥；每门课程显式授权后才发送选定资料。密钥通过系统加密存储保存在本机（Windows 账户保护 / macOS 钥匙串），不上传Git。模拟模式明确标注，不能用于内容质量验收。
+在「API 与设置」中选择「真实 API」，再选文本提供商，填入该平台开放的模型 ID 与 API Key。保存配置后，为当前课程保存文字授权。选 OpenAI 时使用 [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)，选 Anthropic Claude 时使用 [Messages API](https://platform.claude.com/docs/en/api/messages/create)。DeepSeek 使用其官方 Chat Completions 接口。其他兼容服务可填写完整 HTTPS 地址。各文本提供商的密钥由主进程使用系统加密存储，按提供商和服务地址的来源分别保存。语音识别可独立选择服务。
+
 
 本地ASR可选SenseVoice和Qwen3-ASR，首次从设置下载模型；无需语音API密钥。关闭文本AI不影响本地识别。模型不随安装包分发，支持在设置查看下载状态和运行测试，详见[本地识别说明](docs/local-asr.md)。本地按12—20秒语段处理，不能宣称5秒实时字幕。
 
@@ -48,6 +49,7 @@ npm test
 npm run test:desktop
 npm run test:study
 npm run test:chapter
+npm run test:text-providers
 npm run test:audio
 npm run test:deepseek-asr
 npm run pack
@@ -61,7 +63,7 @@ npm run pack
 | macOS 当前架构 | `npm run pack:mac` | `npm run dist:mac`（DMG + ZIP） |
 | macOS Intel | — | `npm run dist:mac:x64`（待实机验证） |
 
-Windows 输出 `release-v0.8.0/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.8.0/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
+Windows 输出 `release-v0.9.0/win-unpacked/听课笔记助手.exe`，必须保留整个目录。Mac arm64 输出 `release-v0.9.0/mac-arm64/听课笔记助手.app`，可双击打开或通过 DMG 拖入“应用程序”。首次录音需允许麦克风权限；窗口关闭后可从 Dock 重开，Command+Q 退出。Mac 使用本地临时签名，未进行 Apple 公证；详见 [macOS 适配与验证](docs/macos-support.md)。
 
 Windows 上可执行 `python scripts/package-delivery.py`生成源码、文档、免安装版和可用安装器的校验ZIP。测试数据、模型、密钥、开发依赖和二进制不提交Git。
 

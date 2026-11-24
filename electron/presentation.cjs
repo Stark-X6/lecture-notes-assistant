@@ -108,4 +108,28 @@ function chapterHeadings(notebook, topics, materials) {
     }),
   );
 }
-module.exports = { format, withoutSourceList, chapterHeadings };
+function nestMarkdown(body, sectionLevel) {
+  const { mapProseLines } = require("./markdown-prose.cjs");
+  const headings = new Map();
+  mapProseLines(body, (line, index) => {
+    const m = line.match(/^( {0,3})(#{1,6})[ \t]+(.+)$/);
+    if (m) headings.set(index, m);
+    return line;
+  });
+  if (!headings.size) return body;
+  let shallowest = 6;
+  for (const m of headings.values())
+    shallowest = Math.min(shallowest, m[2].length);
+  return body
+    .split("\n")
+    .map((line, index) => {
+      const m = headings.get(index);
+      if (!m) return line;
+      const depth = sectionLevel + 1 + m[2].length - shallowest;
+      return depth <= 6
+        ? m[1] + "#".repeat(depth) + " " + m[3]
+        : m[1] + "**" + m[3] + "**";
+    })
+    .join("\n");
+}
+module.exports = { format, withoutSourceList, chapterHeadings, nestMarkdown };

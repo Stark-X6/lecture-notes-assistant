@@ -201,7 +201,16 @@ function routes(context) {
         );
         markdown = [
           "# " + notebook.name,
-          ...items.map((t) => headings.get(t.id) + "\n\n" + t.body),
+          ...items.map((t) => {
+            const heading = headings.get(t.id);
+            const body = notebook.outline
+              ? require("./presentation.cjs").nestMarkdown(
+                  t.body,
+                  heading.match(/^#+/)[0].length,
+                )
+              : t.body;
+            return heading + "\n\n" + body;
+          }),
         ].join("\n\n");
       } else {
         const item = store.s.artifacts.find(

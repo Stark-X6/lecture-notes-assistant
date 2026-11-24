@@ -122,6 +122,7 @@ test("实际请求仅发送一份转录文字，模型可用短引用准确指�
     {
       ...input.provider,
       mode: "http",
+      textProvider: "compatible",
       textUrl: "https://example.org/chat",
       textModel: "fixture",
     },

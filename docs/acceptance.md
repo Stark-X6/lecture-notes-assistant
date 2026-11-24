@@ -1,5 +1,11 @@
 # 听课笔记助手验收记录
 
+## v0.9.0 文本提供商与笔记导出
+
+- OpenAI Responses、Anthropic Messages 和自定义兼容服务分别验证请求头、请求体、流式与非流式响应、取消、额度、用量和结构化结果。密钥按服务及 HTTPS 来源绑定；切换、授权、重启后恢复、旧 DeepSeek 配置与自定义输出上限均通过隔离回归。
+- 大纲、课程笔记增补、模板和学习任务共用本地范围及版本校验。Markdown 导出保留章内标题从属关系，可定位的临时引文转为真实页码或课堂时间，代码示例保持原样。
+- 单元测试通过 113/113。Apple Silicon 打包版通过 `npm run test:text-providers`、`npm run test:generation-settings`、`npm run test:chapter` 与 `npm run test:desktop`。两种新提供商的验收使用模拟协议响应，未使用其真实账户。
+
 ## v0.8.0 整章骨架与分批补充
 
 - 课前仅选择课件或教材即可预览标题、层级和来源页。确认后导出一份全章 Markdown。重复确认复用稳定小节，资料被替换或骨架版本改变时拒绝过期预览。

@@ -62,6 +62,7 @@ import {
 } from "./NotebookSections";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import textProviders from "../electron/text-providers.json";
 import "./style.css";
 import "./theme.css";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -84,6 +85,17 @@ const clock = (ms: number | null) =>
         .padStart(2, "0")}`;
 const invoke = (m: string, a: any = {}) => api.invoke(m, a);
 type Obj = Record<string, any>;
+type TextProvider = keyof typeof textProviders;
+function textOrigin(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password
+      ? url.origin
+      : "";
+  } catch {
+    return "";
+  }
+}
 type MaterialTab = "slides" | "book";
 type MaterialJump = {
   tab: MaterialTab;
@@ -2358,14 +2370,13 @@ function SettingsForm({
     [asrBackendDraft, setAsrBackendDraft] = useState<"local" | "cloud">(
       configuredBackend,
     ),
-    [consent, setConsent] = useState({
-      text:
-        (course?.consent.text && course?.consent.version === config.version) ||
-        false,
-      audio:
-        (course?.consent.audio && course?.consent.version === config.version) ||
-        false,
-    }),
+    [consentDraft, setConsentDraft] = useState<{
+      courseId: string;
+      version: number;
+      text: boolean;
+      audio: boolean;
+    } | null>(null),
+    [savingVersion, setSavingVersion] = useState(0),
     [message, setMessage] = useState(""),
     [localAction, setLocalAction] = useState(""),
     [localMessage, setLocalMessage] = useState(""),
@@ -2386,6 +2397,71 @@ function SettingsForm({
   useEffect(() => {
     setTerms(String(course?.asrTerms || ""));
   }, [course?.asrTerms]);
+  const consent =
+    consentDraft &&
+    consentDraft.version === config.version &&
+    consentDraft.courseId === course?.id
+      ? consentDraft
+      : {
+          text:
+            course?.consent?.version === config.version &&
+            !!course?.consent?.text,
+          audio:
+            course?.consent?.version === config.version &&
+            !!course?.consent?.audio,
+        };
+  const editConsent = (kind: "text" | "audio", checked: boolean) =>
+    setConsentDraft({
+      ...consent,
+      [kind]: checked,
+      courseId: course.id,
+      version: config.version,
+    });
+  const textProvider = v.textProvider as TextProvider;
+  const preset = textProviders[textProvider];
+  const origin = textOrigin(v.textUrl);
+  const hasTextKey = Boolean(
+    origin && config.textKeyScopes.includes(textProvider + "|" + origin),
+  );
+  const pendingTextConfig =
+    savingVersion > config.version ||
+    !!v.textKey ||
+    [
+      "mode",
+      "textProvider",
+      "textUrl",
+      "textModel",
+      "textThinking",
+      "maxCalls",
+      "maxOutput",
+    ].some((k) => v[k] !== config[k]);
+  const selectTextProvider = (next: TextProvider) => {
+    const saved = config.textProfiles[next];
+    const initialMaxOutput =
+      next === "openai" || next === "anthropic"
+        ? Math.min(config.maxOutput, 8192)
+        : config.maxOutput;
+    setV((current) => ({
+      ...current,
+      textProvider: next,
+      textUrl:
+        next === "compatible" ? saved?.textUrl || "" : textProviders[next].url,
+      textModel: saved?.textModel || "",
+      textThinking: saved?.textThinking === true,
+      maxOutput: saved?.maxOutput ?? initialMaxOutput,
+      textKey: "",
+    }));
+    setMessage("");
+  };
+  const changeTextUrl = (url: string) => {
+    setV((current) => ({
+      ...current,
+      textUrl: url,
+      textKey:
+        textOrigin(current.textUrl) === textOrigin(url) ? current.textKey : "",
+    }));
+    setMessage("");
+  };
   const field = (
     k: string,
     label: string,
@@ -2472,8 +2548,8 @@ function SettingsForm({
   return (
     <div className="settings-form">
       <p className="modal-description">
-        文本和语音可使用不同服务商。API 密钥由系统
-        加密存储保存在本机，不会返回界面。填写完整端点地址；更换文本配置后需要重新授权课程。
+        文本和语音可分别选择服务商。系统在本机加密保存密钥。保存 API
+        配置后，请为当前课程授权。
       </p>
       <div className="settings-section local-asr-settings">
         <h3>
@@ -2756,23 +2832,43 @@ function SettingsForm({
       <div className="settings-section">
         <h3>
           <Sparkles size={16} />
-          文本生成 <span>Chat Completions 兼容协议 · SSE / JSON</span>
+          文本生成 <span>{preset.protocol}</span>
         </h3>
-        {field(
-          "textUrl",
-          "完整请求地址",
-          "https://your-provider/v1/chat/completions",
-        )}
+        <label>
+          文本提供商
+          <select
+            aria-label="文本提供商"
+            value={textProvider}
+            onChange={(e) => selectTextProvider(e.target.value as TextProvider)}
+          >
+            {Object.entries(textProviders).map(([id, provider]) => (
+              <option key={id} value={id}>
+                {provider.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          完整请求地址
+          <input
+            type="url"
+            value={v.textUrl}
+            readOnly={textProvider !== "compatible"}
+            placeholder="https://your-provider/v1/chat/completions"
+            autoComplete="off"
+            onChange={(e) => changeTextUrl(e.target.value)}
+          />
+        </label>
         <div className="form-grid">
-          {field("textModel", "模型名称", "填写服务商提供的模型 ID")}
+          {field("textModel", "模型名称", preset.modelHint)}
           {field(
             "textKey",
             "API 密钥",
-            config.hasTextKey ? "已保存，留空保留" : "sk-…",
+            hasTextKey ? "当前服务已保存，留空保留" : "填写当前文本服务的密钥",
             true,
           )}
         </div>
-        {safeHost(v.textUrl, "") === "api.deepseek.com" && (
+        {origin && new URL(origin).hostname === "api.deepseek.com" && (
           <>
             <label className="checkbox">
               <input
@@ -2931,13 +3027,25 @@ function SettingsForm({
         className="primary"
         onClick={() =>
           void onRun(async () => {
-            await invoke("provider.configure", {
-              ...v,
-              // 文本设置保存时保留独立的语音后端选择。
-              asrBackend: configuredBackend,
-            });
-            setV((current) => ({ ...current, deepseekAsrKey: "" }));
-            setConsent({ text: false, audio: false });
+            setSavingVersion(config.version + 1);
+            try {
+              await invoke("provider.configure", {
+                ...v,
+                asrBackend: configuredBackend,
+              });
+            } catch (error) {
+              setSavingVersion(0);
+              throw error;
+            }
+            setV((current) => ({
+              ...current,
+              textKey: "",
+              asrKey: "",
+              deepseekAsrKey: "",
+              tingwuId: "",
+              tingwuSecret: "",
+            }));
+            setConsentDraft(null);
             setMessage("配置已保存。请重新勾选下面的课程授权。");
           })
         }
@@ -2973,7 +3081,9 @@ function SettingsForm({
           <p>
             文本发送目标：
             {config.mode === "http"
-              ? safeHost(config.textUrl, "未配置文本地址")
+              ? textProviders[config.textProvider as TextProvider].label +
+                " · " +
+                safeHost(config.textUrl, "未配置文本地址")
               : "离线 / 模拟模式"}
             ；语音：
             {configuredBackend === "local"
@@ -2985,23 +3095,24 @@ function SettingsForm({
                   : safeHost(config.asrUrl, "未配置云端语音地址")}
             。范围仅包含本课转录、当前选定材料页和笔记上下文。
           </p>
+          {pendingTextConfig && (
+            <p>请先保存上方文本配置，再为所选服务授权或发送测试文本。</p>
+          )}
           <label className="checkbox">
             <input
               type="checkbox"
-              checked={consent.text}
-              onChange={(e) =>
-                setConsent({ ...consent, text: e.target.checked })
-              }
+              checked={!pendingTextConfig && consent.text}
+              disabled={pendingTextConfig}
+              onChange={(e) => editConsent("text", e.target.checked)}
             />
             允许发送转录、选定材料和笔记，用于整理与模板起草
           </label>
           <label className="checkbox">
             <input
               type="checkbox"
-              checked={consent.audio}
-              onChange={(e) =>
-                setConsent({ ...consent, audio: e.target.checked })
-              }
+              checked={!pendingTextConfig && consent.audio}
+              disabled={pendingTextConfig}
+              onChange={(e) => editConsent("audio", e.target.checked)}
             />
             允许发送麦克风音频与本课待补转写分片
           </label>
@@ -3024,12 +3135,15 @@ function SettingsForm({
               )}
             <button
               className="secondary"
+              disabled={pendingTextConfig}
               onClick={() =>
                 void onRun(async () => {
                   await invoke("lesson.consent", {
                     lessonId,
                     courseId: course?.id,
-                    ...consent,
+                    configVersion: config.version,
+                    text: consent.text,
+                    audio: consent.audio,
                   });
                   setMessage("课程授权已保存");
                 })
@@ -3039,19 +3153,25 @@ function SettingsForm({
             </button>
             <button
               className="text-button"
+              disabled={pendingTextConfig || config.mode === "off"}
               onClick={() =>
                 void onRun(async () => {
                   await invoke("provider.test", {
                     lessonId,
                     courseId: course?.id,
+                    configVersion: config.version,
                   });
                   setMessage(
-                    "文本接口测试成功（已发送测试文本，可能产生费用）",
+                    config.mode === "mock"
+                      ? "模拟文本测试成功"
+                      : "文本接口测试成功（已发送测试文本，可能产生费用）",
                   );
                 })
               }
             >
-              发送测试文本（可能计费）
+              {config.mode === "mock"
+                ? "测试模拟文本"
+                : "发送测试文本（可能计费）"}
             </button>
           </div>
         </div>
