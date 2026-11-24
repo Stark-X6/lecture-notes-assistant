@@ -27,6 +27,18 @@ const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
       },
     ],
   });
+  if (mode === "draft") {
+    const other = s.createLesson(c.id, "来源课次", { noteId: l.noteId });
+    s.addUtterance(other.id, "共享笔记引用另一课的原句。", {
+      startMs: 30000,
+      endMs: 31000,
+    });
+    const { sources } = s.freeze(other.id);
+    s.saveNote(topic.id, topic.version, topic.body, true, [
+      ...topic.sources,
+      sources[0],
+    ]);
+  }
   s.db.close();
   const app = await electron.launch({
     ...(process.env.LECTURE_EXECUTABLE
@@ -45,8 +57,11 @@ const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
     const page = await app.firstWindow();
     await page.getByRole("button", { name: /第一课/ }).click();
     await page.waitForSelector(".workspace");
+    const tab = (name) => page.getByRole("tab", { name, exact: true });
     if (mode === "live") {
       await page.getByRole("button", { name: "开始录音", exact: true }).click();
+      await tab("笔记").click();
+      await tab("转录").click();
       await expect(
         page.getByRole("button", { name: "暂停", exact: true }),
       ).toBeVisible();
@@ -73,12 +88,8 @@ const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
       );
       await page.getByTitle("结束并保存录音", { exact: true }).click();
     } else if (mode === "popup") {
-      await page
-        .locator(".workspace > .column")
-        .last()
-        .evaluate((el) => {
-          el.style.gridTemplateRows = "minmax(180px,1fr) 8px 160px";
-        });
+      await page.setViewportSize({ width: 1050, height: 720 });
+      await tab("转录").click();
       await page
         .getByRole("button", { name: "选择时间段", exact: true })
         .click();
@@ -89,7 +100,11 @@ const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
       await expect(
         page.getByRole("button", { name: "选择范围", exact: true }),
       ).toBeInViewport({ ratio: 1 });
+      await tab("转录").focus();
+      await tab("转录").press("Home");
+      await expect(page.locator(".range-editor")).toBeHidden();
     } else if (mode === "draft") {
+      await tab("笔记").click();
       await app.evaluate(({ app }) => {
         const require = process
           .getBuiltinModule("node:module")
@@ -105,6 +120,14 @@ const { fakeMicrophonePermission } = require("./helpers/macos-permission.cjs");
         .click();
       const editor = page.getByLabel("Markdown 笔记编辑器", { exact: true });
       await editor.fill("不能丢失的人工草稿");
+      await tab("课件").click();
+      await tab("笔记").click();
+      await expect(editor).toHaveValue("不能丢失的人工草稿");
+      await page.getByText(/章节来源（2）/).click();
+      await page.getByRole("button", { name: /课堂转录 · 00:30/ }).click();
+      await expect(page.locator(".breadcrumb")).toContainText("第一课");
+      await expect(editor).toBeVisible();
+      await expect(editor).toHaveValue("不能丢失的人工草稿");
       await page
         .getByRole("button", { name: "学习工作台", exact: true })
         .click();

@@ -129,6 +129,7 @@ const { _electron: electron, expect } = require("@playwright/test"),
     await page.waitForSelector(".workspace");
     await expect(page.getByLabel("笔记结构")).toHaveValue("slides");
     await expect(page.getByLabel("课程课件范围起始页")).toBeVisible();
+    await page.getByRole("tab", { name: "教材", exact: true }).click();
     await expect(page.getByLabel("参考教材页码")).toBeVisible();
     await expect(page.getByLabel("参考教材范围起始页")).toHaveCount(0);
     await page.getByLabel("笔记结构").selectOption("book");
@@ -142,13 +143,12 @@ const { _electron: electron, expect } = require("@playwright/test"),
     await page
       .getByRole("button", { name: "自动 · 课后整理", exact: true })
       .click();
+    await page.getByRole("tab", { name: "转录", exact: true }).click();
     await page
       .getByRole("button", { name: "整理待处理内容", exact: false })
       .isDisabled()
       .then((disabled) => assert.ok(disabled));
-    await page.getByRole("button", { name: "折叠课件", exact: true }).click();
-    assert.equal(await page.locator(".material-slides").isVisible(), false);
-    await page.getByRole("button", { name: "展开课件", exact: true }).click();
+    await page.getByRole("tab", { name: "笔记", exact: true }).click();
     await page
       .getByRole("button", { name: "整理课堂笔记", exact: true })
       .click();
@@ -201,7 +201,7 @@ const { _electron: electron, expect } = require("@playwright/test"),
           "shared notebooks",
           "class dates",
           "whole lesson candidates",
-          "panel collapse",
+          "classroom tabs",
           "math",
           "managed images",
           "export attachments",

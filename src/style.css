@@ -1,5 +1,7 @@
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
   color: #263029;
   background: #f3f5ee;
   font-synthesis: none;
@@ -204,26 +206,6 @@
 .recording-global {
   color: #af3a4d;
   margin-left: auto;
-}
-.workspace.collapse-slides .material-slides,
-.workspace.collapse-book .material-book,
-.workspace.collapse-notes .note-panel,
-.workspace.collapse-transcript .transcript-panel {
-  display: none;
-}
-.workspace.collapse-slides > .column:first-child,
-.workspace.collapse-notes > .column:last-child {
-  grid-template-rows: 0 0 minmax(0, 1fr) !important;
-}
-.workspace.collapse-book > .column:first-child,
-.workspace.collapse-transcript > .column:last-child {
-  grid-template-rows: minmax(0, 1fr) 0 0 !important;
-}
-.workspace:is(.collapse-slides, .collapse-book) > .column:first-child > .resize,
-.workspace:is(.collapse-notes, .collapse-transcript)
-  > .column:last-child
-  > .resize {
-  display: none;
 }
 .markdown img {
   max-width: 100%;
@@ -733,52 +715,20 @@ main {
   padding: 2px;
 }
 .workspace {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
-.column {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+.classroom-page:not([hidden]) {
+  display: flex;
+  flex: 1;
   min-width: 0;
   min-height: 0;
 }
-.column > .panel:first-child {
-  grid-row: 1;
-}
-.column > .resize.horizontal {
-  grid-row: 2;
-}
-.column > .panel:last-child {
-  grid-row: 3;
-}
-.resize {
-  position: relative;
-  touch-action: none;
-}
-.resize.vertical {
-  cursor: col-resize;
-}
-.resize.horizontal {
-  cursor: row-resize;
-}
-.resize:hover:after {
-  content: "";
-  position: absolute;
-  border-radius: 2px;
-  background: #d2dcc9;
-}
-.resize.vertical:hover:after {
-  top: 35%;
-  bottom: 35%;
-  width: 2px;
-  left: 3px;
-}
-.resize.horizontal:hover:after {
-  left: 35%;
-  right: 35%;
-  height: 2px;
-  top: 3px;
+.classroom-page > .panel {
+  flex: 1;
+  border-top-left-radius: 0;
 }
 .panel {
   border: 1px solid #e5eadf;
@@ -915,10 +865,18 @@ main {
 .pdf-scroll canvas {
   box-shadow: 0 2px 8px #26302915;
   max-width: none;
-  display: inline-block;
+  display: block;
+  margin: 0 auto;
   background: white;
   width: 100%;
   height: auto;
+}
+.document-text {
+  text-align: left;
+  padding: 16px 24px;
+  max-width: 84ch;
+  margin: 0 auto;
+  background: var(--surface);
 }
 .document-footer {
   height: 34px;

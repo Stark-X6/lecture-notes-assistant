@@ -196,6 +196,7 @@ const fs = require("node:fs"),
     assert.deepEqual(errors, []);
     const cloud = await application.evaluate(() => globalThis.tingwuFixture);
     assert.deepEqual(cloud.stopped, cloud.created);
+    await page.getByRole("tab", { name: "转录", exact: true }).click();
     await page.screenshot({ path: "artifacts/tingwu-transcript.png" });
     console.log(
       JSON.stringify(

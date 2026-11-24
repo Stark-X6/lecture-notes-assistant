@@ -953,25 +953,32 @@ async function exportNotes(lid) {
   for (const t of topics) {
     const exported = require("./attachments.cjs").exportMarkdown(
       store,
-      t.body,
+      require("./presentation.cjs").withoutSourceList(t.body, t.sources),
       temp,
     );
     body += `## ${t.title}\n\n${exported.body}\n\n`;
     if (exported.missing.length)
       body += "> 缺失附件：" + exported.missing.join("、") + "\n\n";
     if (t.sources.length) {
-      body += "来源：\n";
+      const byDocument = new Map();
       for (const r of t.sources) {
-        const label =
-          r.kind === "material"
-            ? `${r.name}，第 ${r.page} 页`
-            : r.startMs === null
-              ? `转录第 ${r.paragraph} 段`
-              : `转录 ${Math.round(r.startMs / 1000)}–${Math.round(r.endMs / 1000)} 秒`;
-        const description =
-          r.kind === "transcript" && r.lessonName
-            ? `${r.lessonName} · ${label}`
-            : label;
+        const document = r.name || r.lessonName || "课堂转录";
+        const displayTime = (ms) => {
+          const seconds = Math.floor(ms / 1000);
+          return (
+            Math.floor(seconds / 60) +
+            ":" +
+            String(seconds % 60).padStart(2, "0")
+          );
+        };
+        const label = r.page
+          ? `${/\.pdf$/i.test(document) ? "PDF " : ""}第 ${r.page} 页`
+          : r.startMs != null
+            ? `${displayTime(r.startMs)}–${displayTime(r.endMs)}`
+            : r.paragraph
+              ? `第 ${r.paragraph} 段`
+              : `版本 ${r.revision || 1}`;
+        const description = document + " · " + label;
         if (!footnotes.has(r.id)) {
           const key = `source-${footnotes.size + 1}`;
           const excerpt = (r.text || "").trim();
@@ -986,9 +993,13 @@ async function exportNotes(lid) {
               : "");
           footnotes.set(r.id, { key, definition });
         }
-        body += `- ${description} [^${footnotes.get(r.id).key}]\n`;
+        if (!byDocument.has(document)) byDocument.set(document, []);
+        byDocument.get(document).push(`${label}[^${footnotes.get(r.id).key}]`);
       }
-      body += "\n";
+      body +=
+        [...byDocument]
+          .map(([name, links]) => `- ${name} · ${links.join("、")}`)
+          .join("\n") + "\n\n";
     }
   }
   if (footnotes.size)

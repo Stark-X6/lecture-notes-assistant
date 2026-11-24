@@ -45,6 +45,7 @@ const fs = require("node:fs"),
       { config: snapshot.config, lid: lesson.id },
     );
     await page.getByText("0 个进行中", { exact: true }).waitFor();
+    await page.getByRole("tab", { name: "笔记", exact: true }).click();
     await page.waitForFunction(() =>
       document.querySelector(".save-label")?.textContent.includes("v1"),
     );
@@ -75,7 +76,7 @@ const fs = require("node:fs"),
     const pdf = path.join(data, "fixture.pdf");
     const objects = [
       "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
       "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 400] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ];
@@ -83,6 +84,11 @@ const fs = require("node:fs"),
       "BT /F1 24 Tf 40 300 Td (Software Engineering) Tj 0 -42 Td /F1 14 Tf (Requirements - Design - Implementation - Verification) Tj ET";
     objects.push(
       `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 400] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
+    );
+    const secondPage = "BT /F1 24 Tf 40 300 Td (Verification) Tj ET";
+    objects.push(
+      `<< /Length ${secondPage.length} >>\nstream\n${secondPage}\nendstream`,
     );
     let doc = "%PDF-1.4\n",
       offsets = [0];
@@ -92,12 +98,12 @@ const fs = require("node:fs"),
     });
     const xref = Buffer.byteLength(doc);
     doc +=
-      `xref\n0 6\n0000000000 65535 f \n` +
+      `xref\n0 ${offsets.length}\n0000000000 65535 f \n` +
       offsets
         .slice(1)
         .map((n) => `${String(n).padStart(10, "0")} 00000 n \n`)
         .join("") +
-      `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+      `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
     fs.writeFileSync(pdf, doc);
     await app.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({
@@ -105,6 +111,7 @@ const fs = require("node:fs"),
         filePaths: [file],
       });
     }, pdf);
+    await page.getByRole("tab", { name: "课件", exact: true }).click();
     await page.getByTitle("导入课程课件").click();
     await page.locator(".pdf-scroll canvas").waitFor();
     await page.waitForTimeout(700);
@@ -113,6 +120,28 @@ const fs = require("node:fs"),
     );
     if (!imported.materials[0].pages[0].includes("Software"))
       throw new Error("PDF 文本索引失败");
+    const reader = page.getByRole("tabpanel", { name: "课件", exact: true });
+    await reader.getByTitle("下一页").click();
+    const canvas = reader.locator("canvas");
+    const width = (await canvas.boundingBox()).width;
+    await reader.getByRole("button", { name: "100%" }).click();
+    const zoomWidth = (await canvas.boundingBox()).width;
+    if (zoomWidth < width * 1.25) throw new Error("课件缩放未生效");
+    const position = await reader.locator(".pdf-scroll").evaluate((scroll) => {
+      scroll.scrollTop = 100;
+      scroll.scrollLeft = 80;
+      return [scroll.scrollTop, scroll.scrollLeft];
+    });
+    if (!position[0] || !position[1]) throw new Error("放大的课件无法滚动");
+    await page.getByRole("tab", { name: "笔记", exact: true }).click();
+    await page.getByRole("tab", { name: "课件", exact: true }).click();
+    if ((await reader.getByLabel("课程课件页码").inputValue()) !== "2")
+      throw new Error("切换页签后课件页码发生变化");
+    const restored = await reader
+      .locator(".pdf-scroll")
+      .evaluate((scroll) => [scroll.scrollTop, scroll.scrollLeft]);
+    if (position.some((value, index) => value !== restored[index]))
+      throw new Error("切换页签后课件滚动位置发生变化");
     await page.evaluate(
       async ({ course, lid }) => {
         await window.desktop.invoke("template.save", {
@@ -165,6 +194,7 @@ const fs = require("node:fs"),
     )
       throw new Error("人工编辑未保存或被覆盖");
     if (!during.chunks.length) throw new Error("录音未保存任何分片");
+    await page.getByRole("tab", { name: "笔记", exact: true }).click();
     await page.getByRole("button", { name: "暂停", exact: true }).click();
     await page.getByRole("button", { name: "继续", exact: true }).waitFor();
     const pauseState = await page.evaluate(() =>
@@ -176,6 +206,7 @@ const fs = require("node:fs"),
     );
     if (stillPaused.lessons[0].captureMs !== pauseState.lessons[0].captureMs)
       throw new Error("暂停时间错误计入音频");
+    await page.getByRole("tab", { name: "教材", exact: true }).click();
     await page.getByRole("button", { name: "继续", exact: true }).click();
     await page.waitForTimeout(1100);
     await page.evaluate(
@@ -188,6 +219,7 @@ const fs = require("node:fs"),
     );
     if (stoppedAI.lessons[0].recording !== "recording")
       throw new Error("停止 AI 中断录音");
+    await page.getByRole("tab", { name: "转录", exact: true }).click();
     await page.getByTitle("结束并保存录音").click();
     await page
       .getByRole("button", { name: "开始录音", exact: true })

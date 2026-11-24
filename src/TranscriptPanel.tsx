@@ -20,6 +20,7 @@ import {
 } from "./transcriptSelection";
 
 type Props = {
+  active: boolean;
   items: TranscriptRow[];
   topics: Record<string, any>[];
   selected: string[];
@@ -30,7 +31,7 @@ type Props = {
   onPlay: (item: TranscriptRow) => void;
   onRevise: (item: TranscriptRow) => void;
   stateOf: (item: TranscriptRow) => string;
-  focusSource: string;
+  focusSource: { targetId: string } | null;
   captureActive: boolean;
   waiting: boolean;
   partial: string;
@@ -79,17 +80,21 @@ export function TranscriptPanel(p: Props) {
     [error, setError] = useState("");
   const [applied, setApplied] = useState(""),
     [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    if (p.focusSource && p.items.some((item) => item.id === p.focusSource)) {
-      setSearch("");
-      const frame = requestAnimationFrame(() =>
-        document
-          .getElementById(p.focusSource)
-          ?.scrollIntoView({ block: "center" }),
-      );
-      return () => cancelAnimationFrame(frame);
-    }
+  useLayoutEffect(() => {
+    if (!p.focusSource) return;
+    const target = p.items.find((item) => item.id === p.focusSource?.targetId);
+    if (!target) return;
+    if (!target.text.includes(search)) setSearch("");
+    const frame = requestAnimationFrame(() => {
+      const element = document.getElementById(target.id);
+      element?.focus({ preventScroll: true });
+      element?.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [p.focusSource]);
+  useEffect(() => {
+    if (!p.active) setRangeOpen(false);
+  }, [p.active]);
   useEffect(() => {
     if (!editedRange) {
       setTo(formatTimestamp(end));
@@ -235,7 +240,8 @@ export function TranscriptPanel(p: Props) {
             {timed ? "选择时间段" : "选择段落范围"}
             <ChevronDown size={13} />
           </button>
-          {rangeOpen &&
+          {p.active &&
+            rangeOpen &&
             createPortal(
               <div
                 className="range-editor"
@@ -435,10 +441,13 @@ export function TranscriptPanel(p: Props) {
                   <div
                     key={item.id}
                     id={item.id}
+                    tabIndex={
+                      p.focusSource?.targetId === item.id ? -1 : undefined
+                    }
                     className={
                       "transcript-sentence " +
                       (selected.has(item.id) ? "selected " : "") +
-                      (p.focusSource === item.id ? "highlight" : "")
+                      (p.focusSource?.targetId === item.id ? "highlight" : "")
                     }
                   >
                     <div className="sentence-meta">
@@ -486,11 +495,14 @@ export function TranscriptPanel(p: Props) {
                 {group.items.map((item) => (
                   <span
                     id={item.id}
+                    tabIndex={
+                      p.focusSource?.targetId === item.id ? -1 : undefined
+                    }
                     key={item.id}
                     className={
                       "transcript-fragment " +
                       (selected.has(item.id) ? "selected " : "") +
-                      (p.focusSource === item.id ? "highlight" : "")
+                      (p.focusSource?.targetId === item.id ? "highlight" : "")
                     }
                   >
                     {item.text}{" "}

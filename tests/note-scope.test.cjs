@@ -5,6 +5,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { Store } = require("../electron/core.cjs");
 const { Scheduler } = require("../electron/provider.cjs");
+const { generate } = require("../electron/provider.cjs");
 
 async function classroom(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lecture-scope-"));
@@ -80,6 +81,90 @@ function block(id, title, body, ...sources) {
   };
 }
 const result = (...blocks) => ({ schema_version: "1", blocks });
+
+test("双语讲义从实际讲授的节名定位教材正文和连续页，剔除同名目录与索引", async (t) => {
+  const { store, second, slides, book } = await classroom(t);
+  slides.pages = [
+    "Contents\n2.3 缓存 Cache\n2.4 日志 Journal\n本次讲解\n缓存 Cache（续）\n命中与淘汰",
+  ];
+  book.pages = [
+    "TABLE OF CONTENTS\n2.3 Cache 80\n2.4 Journal 90",
+    "About the Authors\nCache Journal",
+    "80 CHAPTER 2 • STORAGE\nA local copy reduces the number of slow reads.",
+    "2.3 • THE CACHE 81\nA miss fetches the data from storage.",
+    "82 CHAPTER 2 • STORAGE\nDirty entries must be written back before eviction.",
+    "2.3 • THE CACHE 83\nReplacement policies.",
+    "2.4 • THE JOURNAL 84\nThe last point about eviction.\n2.4 The Journal",
+    "86 CHAPTER 2 • STORAGE\nTransactions and records.",
+    "2.4 • THE JOURNAL 87\nRecovery from failure.",
+    "INDEX\nCache 80, 81, 83; Journal 84",
+  ];
+  store.setContext(second.id, {
+    slides: { id: slides.id, from: 1, to: 1 },
+    book: { id: book.id },
+  });
+  const input = store.enqueueWhole(second.id).input;
+  const pages = input.sources
+    .filter((s) => s.materialRole === "book")
+    .map((s) => s.page);
+  assert.deepEqual(pages, [3, 4, 5, 6, 7]);
+});
+
+test("实际请求仅发送一份转录文字，模型可用短引用准确指回原字幕修订与 PDF 页", async (t) => {
+  const { store, second, slides } = await classroom(t);
+  const u = store.addUtterance(second.id, "唯一的课堂例子", {
+    startMs: 8100,
+    endMs: 10500,
+  });
+  store.setContext(second.id, { slides: { id: slides.id, from: 2, to: 2 } });
+  const input = store.enqueueWhole(second.id).input;
+  const answer = await generate(
+    {
+      ...input.provider,
+      mode: "http",
+      textUrl: "https://example.org/chat",
+      textModel: "fixture",
+    },
+    "fixture-test",
+    input,
+    new AbortController().signal,
+    () => {},
+    async (_, req) => {
+      const payload = JSON.parse(req.body).messages.at(-1).content;
+      assert.equal(payload.split(u.text).length - 1, 1);
+      assert.ok(!payload.includes(u.id));
+      const data = JSON.parse(payload);
+      const passage = data.transcript.find((row) => row.at(-1) === u.text);
+      const page = data.pages.find(
+        (p) => p.materialRole === "slides" && p.page === 2,
+      );
+      const output = {
+        schema_version: "1",
+        blocks: [
+          {
+            topic_id: "new:授课例子",
+            title: "授课例子",
+            evidence_type: "teacher_explanation",
+            content_md: "课堂例子",
+            source_ids: [passage[0], page.id],
+          },
+        ],
+      };
+      return Response.json({
+        choices: [
+          {
+            message: { content: JSON.stringify(output) },
+            finish_reason: "stop",
+          },
+        ],
+      });
+    },
+  );
+  assert.deepEqual(answer.blocks[0].source_ids, [
+    "u:" + u.id + ":1",
+    "p:ppt:2:s",
+  ]);
+});
 
 test("选定课件限制证据和旧笔记上下文，教材只补充与所选页相关的内容，共享笔记保留原文", async (t) => {
   const { store, first, second, topic } = await classroom(t);
@@ -175,4 +260,72 @@ test("教材或课件排序以引用页为准，整课分批仍保留本次课�
       order,
     );
   }
+});
+
+test("选页整课保留开场导读供查阅，用正文引用判别混合主题及教师强调", async (t) => {
+  const { store, second, slides } = await classroom(t);
+  slides.pages = [
+    "本章提纲\n1.1 缓存的作用\n1.2 日志与恢复\n1.3 故障模型\n缓存机制\n用高速副本减少访问延迟。",
+  ];
+  store.s.utterances = [];
+  const turns = [
+    "本章后面会讲故障模型。",
+    "第三节列举故障模式。",
+    "后面也会讲日志记录。",
+    "以上是本章的提纲。",
+    "下面我们正式进入缓存。",
+    "副本命中时缩短了等待时间。",
+    "这个公式的前提必须掌握。",
+  ].map((s) => store.addUtterance(second.id, s));
+  store.setContext(second.id, { slides: { id: slides.id, from: 1, to: 1 } });
+  const task = store.enqueueWhole(second.id);
+  const slide = task.input.sources.find((s) => s.materialRole === "slides");
+  const ref = (i) => task.input.sources.find((s) => s.targetId === turns[i].id);
+  task.state = "running";
+  store.applyResult(
+    task.id,
+    result(
+      block("new:故障模型", "故障模型", "章节预告", slide, ref(0), ref(1)),
+      block(
+        "new:日志",
+        "日志及恢复：方法",
+        "章节预告和附带说明",
+        slide,
+        ref(0),
+        ref(2),
+        ref(5),
+      ),
+      block(
+        "new:缓存",
+        "缓存",
+        "【教师强调】缓存副本可缩短访问时间。",
+        slide,
+        ref(5),
+      ),
+      block("new:前提", "使用前提", "【教师强调】公式前提。", slide, ref(6)),
+    ),
+  );
+  assert.deepEqual(
+    task.introduction?.map((b) => b.title),
+    ["故障模型", "日志及恢复：方法"],
+  );
+  assert.equal(store.s.candidates.length, 2);
+  assert.match(store.s.candidates[0].body, /【课堂讲解】/);
+  assert.match(store.s.candidates[1].body, /【教师强调】/);
+});
+
+test("没有明确转场时，开头有目录也保留正常教学内容", async (t) => {
+  const { store, second, slides } = await classroom(t);
+  slides.pages = ["本章目录\n1.1 分组交换\n1.2 排队时延\n分组交换的具体步骤"];
+  store.setContext(second.id, { slides: { id: slides.id, from: 1, to: 1 } });
+  const task = store.enqueueWhole(second.id);
+  task.state = "running";
+  store.applyResult(
+    task.id,
+    result(
+      block("new:分组交换", "分组交换", "课堂要点", ...task.input.sources),
+    ),
+  );
+  assert.equal(task.introduction?.length || 0, 0);
+  assert.equal(store.s.candidates.length, 1);
 });

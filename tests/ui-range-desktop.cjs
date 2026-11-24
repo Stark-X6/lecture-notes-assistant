@@ -37,6 +37,13 @@ const { Store } = require("../electron/core.cjs");
     }),
   ];
   const untimed = seed.addUtterance(lesson.id, "无时间戳的补充说明。");
+  seed.tx(() => {
+    course.layout = {
+      left: 45,
+      top: 60,
+      collapsed: ["slides", "book", "notes", "transcript"],
+    };
+  });
   seed.db.close();
   const application = await electron.launch({
     ...(process.env.LECTURE_EXECUTABLE
@@ -56,11 +63,44 @@ const { Store } = require("../electron/core.cjs");
     });
     await expect(whole).toBeVisible({ timeout: 2000 });
     assert.ok((await whole.boundingBox()).height >= 44);
+    const tabs = page.getByRole("tablist", { name: "课堂页面" });
+    const tab = (name) => tabs.getByRole("tab", { name, exact: true });
+    const names = ["课件", "教材", "笔记", "转录"];
+    await expect(tabs.getByRole("tab")).toHaveText(names, { timeout: 2000 });
+    assert.equal(
+      await page
+        .locator(".material-book, .note-scroll, .transcript-group")
+        .count(),
+      0,
+      "进入课件时还不应挂载其他标签的阅读正文",
+    );
+    for (const name of names) {
+      await tab(name).click();
+      await expect(tab(name)).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("tabpanel")).toHaveCount(1);
+      const panel = page.getByRole("tabpanel", { name, exact: true });
+      await expect(panel).toBeVisible();
+      assert.ok(
+        (await panel.boundingBox()).width >=
+          (await tabs.boundingBox()).width - 2,
+      );
+    }
+    await tab("转录").press("ArrowRight");
+    await expect(tab("课件")).toBeFocused();
+    await tab("课件").press("End");
+    await expect(tab("转录")).toBeFocused();
+    await expect(tab("转录")).toHaveAttribute("aria-selected", "true");
     await page.getByRole("button", { name: "选择时间段", exact: true }).click();
     await page.getByLabel("开始时间", { exact: true }).fill("00:10");
     await page.getByLabel("结束时间", { exact: true }).fill("00:40");
     await page.getByPlaceholder("搜索课堂内容…").fill("路由器");
     await page.getByRole("button", { name: "选择范围", exact: true }).click();
+    await expect(
+      page.getByText("已选 2 段", { exact: false }).first(),
+    ).toBeVisible();
+    await tab("笔记").click();
+    await tab("转录").click();
+    await expect(page.getByPlaceholder("搜索课堂内容…")).toHaveValue("路由器");
     await expect(
       page.getByText("已选 2 段", { exact: false }).first(),
     ).toBeVisible();
@@ -123,89 +163,45 @@ const { Store } = require("../electron/core.cjs");
       5,
       "whole generation ignores a local selection",
     );
+    await tab("笔记").click();
     await expect(page.locator(".candidate-badge")).toBeVisible();
-    const rightColumn = page.locator(".workspace > .column").last();
-    const splitter = await rightColumn
-      .locator(".resize.horizontal")
-      .boundingBox();
-    const bounds = await rightColumn.boundingBox();
-    await page.mouse.move(
-      splitter.x + splitter.width / 2,
-      splitter.y + splitter.height / 2,
-    );
-    await page.mouse.down();
-    await page.mouse.move(
-      splitter.x + splitter.width / 2,
-      bounds.y + bounds.height - 60,
-    );
-    await page.mouse.up();
-    assert.ok(
-      (await page.locator(".transcript-panel").boundingBox()).height >= 280,
-    );
+    await tab("转录").click();
     await expect(
       page.getByRole("button", { name: "整理待处理内容", exact: true }),
     ).toBeInViewport();
 
     await page.setViewportSize({ width: 1500, height: 970 });
-    const panels = {
-      课件: page.locator(".material-slides"),
-      教材: page.locator(".material-book"),
-      笔记: page.locator(".note-panel"),
-      转录: page.locator(".transcript-panel"),
-    };
-    for (const name of Object.keys(panels)) {
-      await page
-        .getByRole("button", { name: "折叠" + name, exact: true })
-        .click();
-      await expect(panels[name]).toBeHidden();
-      for (const [other, panel] of Object.entries(panels)) {
-        if (other === name) continue;
-        await expect(panel).toBeVisible();
-        assert.ok(
-          (await panel.boundingBox()).height >= 160,
-          other + "被一同折叠",
-        );
-      }
-      await page
-        .getByRole("button", { name: "展开" + name, exact: true })
-        .click();
-      await expect(panels[name]).toBeVisible();
-    }
-    await page.getByRole("button", { name: "折叠课件", exact: true }).click();
-    await page.getByRole("button", { name: "折叠教材", exact: true }).click();
-    await expect(panels.课件).toBeHidden();
-    await expect(panels.教材).toBeHidden();
-    await page.getByRole("button", { name: "展开教材", exact: true }).click();
-    await expect(panels.教材).toBeVisible();
-    await expect(panels.课件).toBeHidden();
-    await page.getByRole("button", { name: "展开课件", exact: true }).click();
+    await tab("笔记").click();
+    const notes = page.getByRole("tabpanel", { name: "笔记", exact: true });
     await expect(
-      panels.笔记.getByRole("heading", { name: notebook.name }),
+      notes.getByRole("heading", { name: notebook.name }),
     ).toBeVisible();
     await expect(
-      panels.笔记.getByRole("heading", { name: "分组交换" }),
+      notes.getByRole("heading", { name: "分组交换" }),
     ).toBeVisible();
-    await expect(
-      panels.笔记.getByText("缓冲区中的分组需要等待发送。"),
-    ).toBeVisible();
-    await expect(panels.笔记.getByText("另一份笔记的内容。")).toHaveCount(0);
-    await panels.笔记.getByRole("button", { name: /^排队时延/ }).click();
-    await panels.笔记
-      .getByRole("button", { name: "编辑", exact: true })
-      .click();
-    await expect(panels.笔记.getByLabel("Markdown 笔记编辑器")).toHaveValue(
+    await expect(notes.getByText("缓冲区中的分组需要等待发送。")).toBeVisible();
+    await expect(notes.getByText("另一份笔记的内容。")).toHaveCount(0);
+    await notes.getByRole("button", { name: /^排队时延/ }).click();
+    await notes.getByRole("button", { name: "编辑", exact: true }).click();
+    await tab("教材").click();
+    await tab("笔记").click();
+    await expect(notes.getByLabel("Markdown 笔记编辑器")).toHaveValue(
       "缓冲区中的分组需要等待发送。",
     );
     await expect(
-      panels.笔记.getByRole("heading", { name: "分组交换" }),
+      notes.getByRole("heading", { name: "分组交换" }),
     ).toBeVisible();
-    await panels.笔记
-      .getByRole("button", { name: "阅读", exact: true })
-      .click();
+    await notes.getByRole("button", { name: "阅读", exact: true }).click();
     fs.mkdirSync("artifacts", { recursive: true });
     await page.screenshot({ path: "artifacts/ui-classroom-wide.png" });
     await page.setViewportSize({ width: 1050, height: 720 });
     await expect(whole).toBeInViewport();
+    for (const name of names)
+      await expect(tab(name)).toBeInViewport({ ratio: 1 });
+    await tab("转录").click();
+    await expect(
+      page.getByRole("button", { name: "整理待处理内容" }),
+    ).toBeInViewport({ ratio: 1 });
     await page.screenshot({ path: "artifacts/ui-classroom-compact.png" });
     await page.getByRole("button", { name: "课程空间", exact: true }).click();
     await page.setViewportSize({ width: 1500, height: 970 });
@@ -223,7 +219,7 @@ const { Store } = require("../electron/core.cjs");
     ).toBeVisible();
     await page.screenshot({ path: "artifacts/ui-course-wide.png" });
     console.log(
-      "PASS: range selection, shared note document and section editing, independent panel collapse, responsive classroom and course views",
+      "PASS: four classroom tabs, keyboard navigation, retained search/selection and editor, responsive classroom and course views",
     );
   } finally {
     await application.close().catch(() => {});

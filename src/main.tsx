@@ -1,6 +1,7 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -42,6 +43,11 @@ import {
 } from "lucide-react";
 import { Markdown } from "./Markdown";
 import { TranscriptPanel } from "./TranscriptPanel";
+import {
+  ClassroomPage,
+  ClassroomTabs,
+  type ClassroomTab,
+} from "./ClassroomTabs";
 import { CourseSpace, LessonSetup, NoteStructureSelect } from "./CourseSpace";
 import * as pdfjs from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -67,6 +73,15 @@ const clock = (ms: number | null) =>
         .padStart(2, "0")}`;
 const invoke = (m: string, a: any = {}) => api.invoke(m, a);
 type Obj = Record<string, any>;
+type MaterialTab = "slides" | "book";
+type MaterialJump = {
+  tab: MaterialTab;
+  targetId: string;
+  lessonId: string;
+  page: number;
+};
+type SourceJump =
+  MaterialJump | { tab: "transcript"; targetId: string; lessonId: string };
 const statusNames: Obj = {
   queued: "等待整理",
   running: "整理中",
@@ -112,8 +127,10 @@ function App() {
   const [s, setS] = useState<Obj | null>(null),
     [cid, setCid] = useState(""),
     [view, setView] = useState("course"),
-    [collapsed, setCollapsed] = useState<string[]>([]),
-    [viewPages, setViewPages] = useState<Obj>({}),
+    [classroomTabs, setClassroomTabs] = useState<Record<string, ClassroomTab>>(
+      {},
+    ),
+    [sourceJump, setSourceJump] = useState<SourceJump | null>(null),
     [playback, setPlayback] = useState(""),
     [lid, setLid] = useState(""),
     [tid, setTid] = useState(""),
@@ -123,9 +140,11 @@ function App() {
     [partial, setPartial] = useState(""),
     [elapsed, setElapsed] = useState(0),
     [selected, setSelected] = useState<string[]>([]),
-    [hint, setHint] = useState(""),
-    [focusSource, setFocusSource] = useState(""),
-    [layout, setLayout] = useState({ left: 50, top: 54 });
+    [hint, setHint] = useState("");
+  const activeTab = classroomTabs[lid] || "slides";
+  const selectTab = (tab: ClassroomTab, lessonId = lid) =>
+    setClassroomTabs((current) => ({ ...current, [lessonId]: tab }));
+  const jump = sourceJump?.lessonId === lid ? sourceJump : null;
   const flush = useRef<() => Promise<void>>(async () => {}),
     refreshing = useRef(false),
     refreshAgain = useRef(false),
@@ -158,7 +177,7 @@ function App() {
       }
     });
   }, [refresh]);
-  const originalUtterances = useMemo(
+  const utterances = useMemo(
     () => s?.utterances.filter((u: Obj) => u.lessonId === lid) || [],
     [s?.utterances, lid],
   );
@@ -176,14 +195,6 @@ function App() {
         (t: Obj) => t.noteId === lesson?.noteId && t.courseId === cid,
       ) || [],
     topic = topics.find((t: Obj) => t.id === tid),
-    utterances =
-      s?.utterances
-        .filter((u: Obj) => u.lessonId === lid)
-        .sort(
-          (a: Obj, b: Obj) =>
-            (a.startMs ?? Infinity) - (b.startMs ?? Infinity) ||
-            a.createdAt - b.createdAt,
-        ) || [],
     tasks = s?.tasks.filter((t: Obj) => t.lessonId === lid) || [],
     materials = s?.materials.filter((m: Obj) => m.courseId === cid) || [],
     candidates =
@@ -199,12 +210,6 @@ function App() {
     }
   }, [s, cid]);
   useEffect(() => {
-    if (course) {
-      setLayout(course.layout || { left: 50, top: 54 });
-      setCollapsed(course.layout?.collapsed || []);
-    }
-  }, [cid]);
-  useEffect(() => {
     if (!lesson) {
       setLid(lessons[0]?.id || "");
       setTid("");
@@ -217,6 +222,8 @@ function App() {
     setElapsed(lesson?.captureMs || 0);
     setPartial("");
     setSelected([]);
+    setHint("");
+    setSourceJump((current) => (current?.lessonId === lid ? current : null));
   }, [lid]);
   const run = async (fn: () => Promise<any>, save = true) => {
     setBusy(true);
@@ -293,19 +300,70 @@ function App() {
         setNotice("此 PDF 无可提取文字，仍可预览；扫描 OCR 不在首版范围内。");
     }
   };
-  const openSource = async (ref: Obj) => {
+  const sourceLabel = (ref: Obj) => {
+    if (ref.kind === "material") return `${ref.name} · 第 ${ref.page} 页`;
+    if (ref.kind === "note") return `${ref.name} · 笔记 v${ref.revision}`;
+    const origin =
+      ref.lessonId && ref.lessonId !== lid
+        ? ref.lessonName ||
+          lessons.find((l: Obj) => l.id === ref.lessonId)?.name
+        : "";
+    const position = Number.isFinite(ref.startMs)
+      ? clock(ref.startMs)
+      : ref.paragraph
+        ? `第 ${ref.paragraph} 段`
+        : "无时间戳";
+    return [origin, "课堂转录", position].filter(Boolean).join(" · ");
+  };
+  const openSource = (ref: Obj) => {
     if (ref.kind === "material") {
       const m = materials.find((m: Obj) => m.id === ref.targetId);
-      if (m) {
-        setViewPages({ ...viewPages, [m.kind]: ref.page });
-        setNotice(`${m.name} 第${ref.page}页：${ref.text}`);
+      if (
+        m &&
+        Number.isInteger(ref.page) &&
+        ref.page >= 1 &&
+        ref.page <= m.pages.length
+      ) {
+        const kind: MaterialTab =
+          ref.materialRole === "book" || ref.materialRole === "slides"
+            ? ref.materialRole
+            : lesson?.context.slides?.id === m.id
+              ? "slides"
+              : lesson?.context.book?.id === m.id || m.kind === "book"
+                ? "book"
+                : "slides";
+        setSourceJump({
+          tab: kind,
+          lessonId: lid,
+          targetId: m.id,
+          page: ref.page,
+        });
+        selectTab(kind);
+        document.getElementById("classroom-tab-" + kind)?.focus();
+        return;
       }
-    } else {
-      setFocusSource(ref.targetId);
-      document
-        .getElementById(ref.targetId)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (ref.kind === "transcript") {
+      const item = s?.utterances.find((u: Obj) => u.id === ref.targetId);
+      if (item && lessons.some((l: Obj) => l.id === item.lessonId)) {
+        const reveal = () => {
+          selectTab("transcript", item.lessonId);
+          setSourceJump({
+            tab: "transcript",
+            targetId: item.id,
+            lessonId: item.lessonId,
+          });
+        };
+        if (item.lessonId === lid) reveal();
+        else
+          void run(async () => {
+            setLid(item.lessonId);
+            setTid("");
+            reveal();
+          });
+        return;
+      }
     }
+    setNotice(ref.text || "找不到这条引用的原始内容");
   };
   const playAudio = async (u: Obj) => {
     const data = await invoke("audio.read", { utteranceId: u.id });
@@ -321,43 +379,6 @@ function App() {
       return url;
     });
   };
-  const resize = (axis: string, e: React.PointerEvent) => {
-    e.preventDefault();
-    const container = e.currentTarget.parentElement!;
-    const rect = container.getBoundingClientRect();
-    const initial = { ...layout };
-    const move = (ev: PointerEvent) =>
-      setLayout({
-        ...initial,
-        [axis]: Math.min(
-          axis === "left" ? 70 : 75,
-          Math.max(
-            axis === "left" ? 30 : 25,
-            (axis === "left"
-              ? (ev.clientX - rect.left) / rect.width
-              : (ev.clientY - rect.top) / rect.height) * 100,
-          ),
-        ),
-      });
-    const up = () => {
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", up);
-    };
-    document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", up);
-  };
-  useEffect(() => {
-    if (!course) return;
-    const timer = setTimeout(
-      () =>
-        invoke("layout.save", {
-          courseId: cid,
-          layout: { ...layout, collapsed },
-        }).catch(() => {}),
-      600,
-    );
-    return () => clearTimeout(timer);
-  }, [layout, cid, collapsed]);
   if (!s)
     return (
       <div className="loading">
@@ -624,8 +645,8 @@ function App() {
             <div className="intro-cards">
               <div>
                 <Layers />
-                <h3>四区，保持专注</h3>
-                <p>对照阅读，让来源始终可见</p>
+                <h3>课堂页签</h3>
+                <p>切换课件、教材、笔记与转录</p>
               </div>
               <div>
                 <Mic />
@@ -830,25 +851,6 @@ function App() {
                 />
                 自动模式：转录完整后整理整课
               </label>
-              {["slides", "book", "notes", "transcript"].map((key, i) => (
-                <button
-                  key={key}
-                  aria-expanded={!collapsed.includes(key)}
-                  onClick={() => {
-                    const value = collapsed.includes(key)
-                      ? collapsed.filter((x) => x !== key)
-                      : [...collapsed, key];
-                    setCollapsed(value);
-                    void call("layout.save", {
-                      courseId: cid,
-                      layout: { ...layout, collapsed: value },
-                    });
-                  }}
-                >
-                  {collapsed.includes(key) ? "展开" : "折叠"}
-                  {["课件", "教材", "笔记", "转录"][i]}
-                </button>
-              ))}
             </div>
             {!lesson.readiness?.complete && (
               <details className="readiness">
@@ -887,222 +889,191 @@ function App() {
                 </button>
               </div>
             )}
-            <div
-              className={
-                "workspace " + collapsed.map((k) => "collapse-" + k).join(" ")
-              }
-              style={{
-                gridTemplateColumns: `minmax(0,${layout.left}fr) 8px minmax(0,${100 - layout.left}fr)`,
-              }}
-            >
-              <div
-                className="column"
-                style={{
-                  gridTemplateRows: `minmax(180px,${layout.top}fr) 8px minmax(160px,${100 - layout.top}fr)`,
-                }}
-              >
-                <MaterialPanel
-                  kind="slides"
-                  viewPage={viewPages.slides}
-                  title="课程课件"
-                  subtitle="阅读页码独立，AI 按选定课件页整理"
-                  materials={materials}
-                  range={lesson.context.slides}
-                  onImport={() => void run(() => importPdf("slides"))}
-                  onRange={(r) =>
-                    void call("lesson.context", {
-                      context: { ...lesson.context, slides: r },
-                    })
-                  }
-                  onError={setNotice}
-                />
-                <div
-                  className="resize horizontal"
-                  onPointerDown={(e) => resize("top", e)}
-                />
-                <MaterialPanel
-                  kind="book"
-                  viewPage={viewPages.book}
-                  title="参考教材"
-                  subtitle="教材可自由翻阅，整理时自动检索相关页"
-                  materials={materials}
-                  range={lesson.context.book}
-                  onImport={() => void run(() => importPdf("book"))}
-                  onRange={(r) =>
-                    void call("lesson.context", {
-                      context: { ...lesson.context, book: r },
-                    })
-                  }
-                  onError={setNotice}
-                />
-              </div>
-              <div
-                className="resize vertical"
-                onPointerDown={(e) => resize("left", e)}
-              />
-              <div
-                className="column"
-                style={{
-                  gridTemplateRows: `minmax(180px,${layout.top}fr) 8px minmax(280px,${100 - layout.top}fr)`,
-                }}
-              >
-                <section className="panel note-panel">
-                  <div className="panel-header">
-                    <div className="panel-title note-document-title">
-                      <span className="panel-symbol purple">
-                        <FileText size={17} />
-                      </span>
-                      <h2 title={notebook?.name}>
-                        {notebook?.name || "知识笔记"}
-                      </h2>
-                    </div>
-                    <div className="row gap6">
-                      {candidates.length > 0 && (
-                        <button
-                          className="candidate-badge"
-                          onClick={() => setModal("candidates")}
-                        >
-                          {candidates.length} 个候选
-                        </button>
-                      )}
-                      <button
-                        className="icon-btn"
-                        title="版本历史"
-                        onClick={() => setModal("history")}
-                      >
-                        <History size={16} />
-                      </button>
-                    </div>
-                  </div>
-                  <nav className="topic-tabs" aria-label="笔记章节">
-                    {topics.map((t: Obj) => (
-                      <button
-                        className={tid === t.id ? "active" : ""}
-                        aria-current={tid === t.id ? "location" : undefined}
-                        key={t.id}
-                        onClick={() =>
-                          void run(async () => {
-                            setTid(t.id);
-                            requestAnimationFrame(() => {
-                              const section = document.getElementById(
-                                "note-section-" + t.id,
-                              );
-                              const scroll = section?.parentElement;
-                              if (section && scroll)
-                                scroll.scrollTop +=
-                                  section.getBoundingClientRect().top -
-                                  scroll.getBoundingClientRect().top;
-                            });
-                          })
-                        }
-                      >
-                        {t.title}
-                        {t.human && <span title="人工编辑保护">·</span>}
-                      </button>
-                    ))}
-                    <button
-                      title="添加笔记章节"
-                      onClick={() => setModal("topic")}
-                    >
-                      <Plus size={15} />
-                    </button>
-                  </nav>
-                  {tasks
-                    .filter((t: Obj) => t.state === "running" && t.preview)
-                    .map((t: Obj) => (
-                      <div className="live-preview" key={t.id}>
-                        <span>
-                          <Sparkles size={12} />
-                          AI 正在整理 · 未验证预览
-                        </span>
-                        <p>{t.preview.slice(-800)}</p>
-                      </div>
-                    ))}
-                  {topics.length ? (
-                    <article className="note-scroll">
-                      {topics.map((t: Obj) => (
-                        <section
-                          className="note-section"
-                          id={"note-section-" + t.id}
-                          key={t.id}
-                        >
-                          <h3>{t.title}</h3>
-                          {t.id === tid ? (
-                            <NoteEditor
-                              topic={t}
-                              flushRef={flush}
-                              onError={setNotice}
-                              onSaved={refresh}
-                            />
-                          ) : t.body ? (
-                            <Markdown>{t.body}</Markdown>
-                          ) : (
-                            <p className="muted small">暂无章节内容</p>
-                          )}
-                          {t.sources.length > 0 && (
-                            <details className="sources">
-                              <summary>章节来源（{t.sources.length}）</summary>
-                              {t.sources.map((r: Obj, i: number) => (
-                                <button key={i} onClick={() => openSource(r)}>
-                                  <span>{i + 1}</span>
-                                  {r.kind === "material"
-                                    ? `${r.name} · 第 ${r.page} 页`
-                                    : r.startMs === null
-                                      ? `课堂转录 · 第 ${r.paragraph} 段`
-                                      : `课堂转录 · ${clock(r.startMs)}`}
-                                  <ArrowUpRight size={12} />
-                                </button>
-                              ))}
-                            </details>
-                          )}
-                        </section>
-                      ))}
-                    </article>
-                  ) : (
-                    <Empty
-                      icon={<FileText size={30} />}
-                      title="这份笔记还没有章节"
-                      description="整理课堂笔记，或手动添加章节。"
-                      action="添加章节"
-                      onAction={() => setModal("topic")}
+            <div className="workspace" key={lid}>
+              <ClassroomTabs active={activeTab} onChange={selectTab} />
+              {(["slides", "book"] as const).map((kind) => (
+                <ClassroomPage key={kind} name={kind} active={activeTab}>
+                  {() => (
+                    <MaterialPanel
+                      kind={kind}
+                      jump={jump?.tab === kind ? jump : null}
+                      title={kind === "slides" ? "课程课件" : "参考教材"}
+                      subtitle={
+                        kind === "slides"
+                          ? "阅读页码独立，AI 按选定课件页整理"
+                          : "教材可自由翻阅，整理时自动检索相关页"
+                      }
+                      materials={materials}
+                      range={lesson.context[kind]}
+                      onImport={() => void run(() => importPdf(kind))}
+                      onRange={(r) =>
+                        void call("lesson.context", {
+                          context: { ...lesson.context, [kind]: r },
+                        })
+                      }
+                      onError={setNotice}
                     />
                   )}
-                </section>
-                <div
-                  className="resize horizontal"
-                  onPointerDown={(e) => resize("top", e)}
-                />
-                <TranscriptPanel
-                  key={lid}
-                  captureActive={recording || paused}
-                  waiting={lesson.windows.some(
-                    (w: Obj) => w.state === "waiting",
-                  )}
-                  items={originalUtterances}
-                  topics={topics}
-                  selected={selected}
-                  onSelected={setSelected}
-                  onAssign={() => setModal("assign")}
-                  onImport={() => void run(() => importPdf("transcript"))}
-                  onManual={() => setModal("transcript")}
-                  onPlay={(u) => void run(() => playAudio(u), false)}
-                  onRevise={(u) => setModal("revise:" + u.id)}
-                  stateOf={stateOf}
-                  focusSource={focusSource}
-                  partial={partial}
-                  hint={hint}
-                  onHint={setHint}
-                  busy={busy}
-                  paused={!!lesson.aiPaused}
-                  automatic={lesson.mode === "auto"}
-                  onSubmit={() =>
-                    void call("submission.create", {
-                      prompt: hint,
-                      ...(selected.length ? { uids: selected } : {}),
-                    })
-                  }
-                />
-              </div>
+                </ClassroomPage>
+              ))}
+              <ClassroomPage name="notes" active={activeTab}>
+                {() => (
+                  <section className="panel note-panel">
+                    <div className="panel-header">
+                      <div className="panel-title note-document-title">
+                        <span className="panel-symbol purple">
+                          <FileText size={17} />
+                        </span>
+                        <h2 title={notebook?.name}>
+                          {notebook?.name || "知识笔记"}
+                        </h2>
+                      </div>
+                      <div className="row gap6">
+                        {candidates.length > 0 && (
+                          <button
+                            className="candidate-badge"
+                            onClick={() => setModal("candidates")}
+                          >
+                            {candidates.length} 个候选
+                          </button>
+                        )}
+                        <button
+                          className="icon-btn"
+                          title="版本历史"
+                          onClick={() => setModal("history")}
+                        >
+                          <History size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    <nav className="topic-tabs" aria-label="笔记章节">
+                      {topics.map((t: Obj) => (
+                        <button
+                          className={tid === t.id ? "active" : ""}
+                          aria-current={tid === t.id ? "location" : undefined}
+                          key={t.id}
+                          onClick={() =>
+                            void run(async () => {
+                              setTid(t.id);
+                              requestAnimationFrame(() => {
+                                const section = document.getElementById(
+                                  "note-section-" + t.id,
+                                );
+                                const scroll = section?.parentElement;
+                                if (section && scroll)
+                                  scroll.scrollTop +=
+                                    section.getBoundingClientRect().top -
+                                    scroll.getBoundingClientRect().top;
+                              });
+                            })
+                          }
+                        >
+                          {t.title}
+                          {t.human && <span title="人工编辑保护">·</span>}
+                        </button>
+                      ))}
+                      <button
+                        title="添加笔记章节"
+                        onClick={() => setModal("topic")}
+                      >
+                        <Plus size={15} />
+                      </button>
+                    </nav>
+                    {tasks
+                      .filter((t: Obj) => t.state === "running" && t.preview)
+                      .map((t: Obj) => (
+                        <div className="live-preview" key={t.id}>
+                          <span>
+                            <Sparkles size={12} />
+                            AI 正在整理 · 未验证预览
+                          </span>
+                          <p>{t.preview.slice(-800)}</p>
+                        </div>
+                      ))}
+                    {topics.length ? (
+                      <article className="note-scroll">
+                        {topics.map((t: Obj) => (
+                          <section
+                            className="note-section"
+                            id={"note-section-" + t.id}
+                            key={t.id}
+                          >
+                            <h3>{t.title}</h3>
+                            {t.id === tid ? (
+                              <NoteEditor
+                                topic={t}
+                                flushRef={flush}
+                                onError={setNotice}
+                                onSaved={refresh}
+                              />
+                            ) : t.body ? (
+                              <Markdown>{t.body}</Markdown>
+                            ) : (
+                              <p className="muted small">暂无章节内容</p>
+                            )}
+                            {t.sources.length > 0 && (
+                              <details className="sources">
+                                <summary>
+                                  章节来源（{t.sources.length}）
+                                </summary>
+                                {t.sources.map((r: Obj, i: number) => (
+                                  <button key={i} onClick={() => openSource(r)}>
+                                    <span>{i + 1}</span>
+                                    {sourceLabel(r)}
+                                    <ArrowUpRight size={12} />
+                                  </button>
+                                ))}
+                              </details>
+                            )}
+                          </section>
+                        ))}
+                      </article>
+                    ) : (
+                      <Empty
+                        icon={<FileText size={30} />}
+                        title="这份笔记还没有章节"
+                        description="整理课堂笔记，或手动添加章节。"
+                        action="添加章节"
+                        onAction={() => setModal("topic")}
+                      />
+                    )}
+                  </section>
+                )}
+              </ClassroomPage>
+              <ClassroomPage name="transcript" active={activeTab}>
+                {() => (
+                  <TranscriptPanel
+                    active={activeTab === "transcript"}
+                    captureActive={recording || paused}
+                    waiting={lesson.windows.some(
+                      (w: Obj) => w.state === "waiting",
+                    )}
+                    items={utterances}
+                    topics={topics}
+                    selected={selected}
+                    onSelected={setSelected}
+                    onAssign={() => setModal("assign")}
+                    onImport={() => void run(() => importPdf("transcript"))}
+                    onManual={() => setModal("transcript")}
+                    onPlay={(u) => void run(() => playAudio(u), false)}
+                    onRevise={(u) => setModal("revise:" + u.id)}
+                    stateOf={stateOf}
+                    focusSource={jump?.tab === "transcript" ? jump : null}
+                    partial={partial}
+                    hint={hint}
+                    onHint={setHint}
+                    busy={busy}
+                    paused={!!lesson.aiPaused}
+                    automatic={lesson.mode === "auto"}
+                    onSubmit={() =>
+                      void call("submission.create", {
+                        prompt: hint,
+                        ...(selected.length ? { uids: selected } : {}),
+                      })
+                    }
+                  />
+                )}
+              </ClassroomPage>
             </div>
             <footer className="statusbar">
               <span>
@@ -1378,6 +1349,17 @@ function App() {
                     </p>
                   )}
                   {t.error && <div className="inline-error">{t.error}</div>}
+                  {!!t.introduction?.length && (
+                    <details>
+                      <summary>开场导读（{t.introduction.length} 个主题）</summary>
+                      {t.introduction.map((block: Obj, i: number) => (
+                        <section key={i}>
+                          <h4>{block.title}</h4>
+                          <Markdown>{block.body}</Markdown>
+                        </section>
+                      ))}
+                    </details>
+                  )}
                   {t.preview && t.state === "running" && (
                     <div className="preview-box">
                       <small>未验证预览</small>
@@ -1757,7 +1739,7 @@ function InputForm({
 }
 function MaterialPanel({
   kind,
-  viewPage,
+  jump,
   title,
   subtitle,
   materials,
@@ -1766,8 +1748,8 @@ function MaterialPanel({
   onRange,
   onError,
 }: {
-  kind: string;
-  viewPage?: number;
+  kind: MaterialTab;
+  jump: MaterialJump | null;
   title: string;
   subtitle: string;
   materials: Obj[];
@@ -1776,39 +1758,64 @@ function MaterialPanel({
   onRange: (r: any) => void;
   onError: (s: string) => void;
 }) {
-  const [doc, setDoc] = useState<any>(null),
+  const [loadedPdf, setLoadedPdf] = useState<{
+      id: string;
+      pdf: pdfjs.PDFDocumentProxy;
+    } | null>(null),
     [loading, setLoading] = useState(false),
     [zoom, setZoom] = useState(100),
-    [browsingPage, setBrowsingPage] = useState(1);
+    [linkedPage, setLinkedPage] = useState(range?.from || 1),
+    [citation, setCitation] = useState<{ id: string; page: number } | null>(
+      null,
+    );
   const canvas = useRef<HTMLCanvasElement>(null);
-  const material = materials.find((m) => m.id === range?.id),
-    page = browsingPage;
-  useEffect(
-    () => setBrowsingPage(viewPage || range?.from || 1),
-    [material?.id, viewPage],
-  );
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const material = materials.find((m) => m.id === (citation?.id || range?.id));
+  const doc = loadedPdf && loadedPdf.id === material?.id ? loadedPdf.pdf : null;
+  const pageCount = doc?.numPages || material?.pages.length || 1;
+  const page = Math.min(citation?.page || linkedPage, pageCount);
+  function setBrowsingPage(value: number) {
+    if (citation) setCitation({ ...citation, page: value });
+    else setLinkedPage(value);
+  }
+  useLayoutEffect(() => {
+    setLinkedPage(range?.from || 1);
+    setCitation(null);
+    setZoom(100);
+  }, [range?.id]);
+  useLayoutEffect(() => {
+    if (!jump) return;
+    if (jump.targetId === range?.id) {
+      setCitation(null);
+      setLinkedPage(jump.page);
+    } else setCitation({ id: jump.targetId, page: jump.page });
+    viewportRef.current?.scrollTo(0, 0);
+  }, [jump]);
+  useLayoutEffect(() => {
+    viewportRef.current?.scrollTo(0, 0);
+  }, [material?.id, page]);
   useEffect(() => {
-    let disposed = false,
-      loaded: any;
-    setDoc(null);
+    let disposed = false;
+    let task: pdfjs.PDFDocumentLoadingTask | undefined;
+    setLoadedPdf(null);
     if (material?.ext !== ".pdf") return;
     setLoading(true);
     invoke("material.read", { id: material.id })
-      .then(
-        (bytes) => pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise,
-      )
-      .then((pdf) => {
-        loaded = pdf;
-        if (!disposed) setDoc(pdf);
-        else pdf.destroy();
+      .then(async (bytes) => {
+        if (disposed) return;
+        task = pdfjs.getDocument({ data: new Uint8Array(bytes) });
+        const pdf = await task.promise;
+        if (!disposed) setLoadedPdf({ id: material.id, pdf });
       })
-      .catch((e) => onError(e.message))
+      .catch((e) => {
+        if (!disposed) onError(e.message);
+      })
       .finally(() => {
         if (!disposed) setLoading(false);
       });
     return () => {
       disposed = true;
-      loaded?.destroy();
+      void task?.destroy().catch(() => {});
     };
   }, [material?.id]);
   useEffect(() => {
@@ -1827,7 +1834,8 @@ function MaterialPanel({
         return task.promise;
       })
       .catch((e: any) => {
-        if (e.name !== "RenderingCancelledException") onError(e.message);
+        if (!cancelled && e.name !== "RenderingCancelledException")
+          onError(e.message);
       });
     return () => {
       cancelled = true;
@@ -1857,31 +1865,40 @@ function MaterialPanel({
       {material ? (
         <>
           <div className="document-toolbar">
-            <select
-              aria-label={title + "文件"}
-              value={material.id}
-              onChange={(e) => {
-                const next = materials.find((m) => m.id === e.target.value);
-                if (next)
-                  onRange(
-                    kind === "slides"
-                      ? { id: next.id, from: 1, to: next.pages.length }
-                      : { id: next.id },
-                  );
-              }}
-            >
-              {materials
-                .filter(
-                  (m) =>
-                    m.id === material.id ||
-                    (m.kind === kind && m.ext === ".pdf"),
-                )
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-            </select>
+            {citation ? (
+              <div className="citation-document">
+                <span title={material.name}>引用资料 · {material.name}</span>
+                <button onClick={() => setCitation(null)}>
+                  返回本课{kind === "book" ? "教材" : "课件"}
+                </button>
+              </div>
+            ) : (
+              <select
+                aria-label={title + "文件"}
+                value={material.id}
+                onChange={(e) => {
+                  const next = materials.find((m) => m.id === e.target.value);
+                  if (next)
+                    onRange(
+                      kind === "slides"
+                        ? { id: next.id, from: 1, to: next.pages.length }
+                        : { id: next.id },
+                    );
+                }}
+              >
+                {materials
+                  .filter(
+                    (m) =>
+                      m.id === material.id ||
+                      (m.kind === kind && m.ext === ".pdf"),
+                  )
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+              </select>
+            )}
             <button
               className="text-button small"
               onClick={() => setZoom((z) => (z === 100 ? 130 : 100))}
@@ -1889,13 +1906,15 @@ function MaterialPanel({
               {zoom}%
             </button>
           </div>
-          <div className="pdf-scroll">
+          <div className="pdf-scroll" ref={viewportRef}>
             {material.ext !== ".pdf" ? (
-              <Markdown>{material.pages[page - 1] || ""}</Markdown>
-            ) : loading ? (
+              <div className="document-text" style={{ zoom: zoom / 100 }}>
+                <Markdown>{material.pages[page - 1] || ""}</Markdown>
+              </div>
+            ) : !doc && loading ? (
               <p>正在打开 PDF…</p>
             ) : (
-              <canvas ref={canvas} />
+              <canvas ref={canvas} style={{ width: zoom + "%" }} />
             )}
           </div>
           <div className="document-footer">
@@ -1913,24 +1932,25 @@ function MaterialPanel({
                 type="number"
                 aria-label={title + "页码"}
                 min={1}
-                max={doc?.numPages || 1}
+                max={pageCount}
                 value={page}
                 onChange={(e) => {
                   const p = Number(e.target.value);
-                  if (p >= 1 && p <= (doc?.numPages || 1)) setBrowsingPage(p);
+                  if (Number.isInteger(p) && p >= 1 && p <= pageCount)
+                    setBrowsingPage(p);
                 }}
               />{" "}
-              / {doc?.numPages || material.pages.length} 页
+              / {pageCount} 页
             </span>
             <button
               className="icon-btn"
               title="下一页"
-              disabled={page >= (doc?.numPages || 1)}
+              disabled={page >= pageCount}
               onClick={() => setBrowsingPage(page + 1)}
             >
               <ChevronRight size={15} />
             </button>
-            {kind === "slides" && (
+            {kind === "slides" && !citation && (
               <label>
                 AI 从{" "}
                 <input
@@ -1946,11 +1966,11 @@ function MaterialPanel({
                   aria-label={title + "范围结束页"}
                   type="number"
                   min={range.from}
-                  max={doc?.numPages || 1}
+                  max={pageCount}
                   value={range.to}
                   onChange={(e) => {
                     const n = Number(e.target.value);
-                    if (n >= range.from && n <= (doc?.numPages || 1))
+                    if (n >= range.from && n <= pageCount)
                       onRange({ ...range, to: n });
                   }}
                 />{" "}

@@ -437,7 +437,7 @@ class Store {
           : "transcript";
     const noteScope =
       slides || order === "book"
-        ? { order, requiresSlides: !!slides }
+        ? { order, requiresSlides: !!slides, version: 2 }
         : undefined;
     const slidePages = slides
       ? scope
@@ -447,18 +447,12 @@ class Store {
     if (slides)
       check(slidePages.length, "所选课件页没有可提取文字，请调整课件范围");
     const bookPages = book
-      ? scope
-          .relevant(
-            scope.pageRefs(book, "book"),
-            slidePages.length
-              ? slidePages.map((p) => p.text)
-              : us.map((u) => u.text),
-            scope.BOOK_PAGE_LIMIT,
-          )
-          .map((p) => ({
-            ...p,
-            text: p.text.slice(0, scope.BOOK_EXCERPT_CHARS),
-          }))
+      ? scope.textbookPages(
+          scope.pageRefs(book, "book"),
+          slidePages.length
+            ? slidePages.map((p) => p.text)
+            : us.map((u) => u.text),
+        )
       : [];
     if (order === "book")
       check(
@@ -630,6 +624,8 @@ class Store {
         return;
       }
       const noteScope = task.input.noteScope;
+      const review = require("./lecture-evidence.cjs");
+      const opening = review.introduction(task.input);
       const position = (block) =>
         require("./note-scope.cjs").position(block, task.input);
       const blocks = noteScope
@@ -664,6 +660,20 @@ class Store {
           (u) =>
             s.utterances.find((x) => x.id === u.id)?.revision !== u.revision,
         );
+        if (noteScope)
+          b.content_md = review.qualifyEmphasis(b.content_md, sources);
+        if (review.isIntroductory(opening, b.title, sources)) {
+          task.introduction ||= [];
+          task.introduction.push({
+            title: b.title,
+            body: require("./presentation.cjs").format(
+              b.content_md,
+              task.input.template.rules,
+              sources,
+            ),
+          });
+          continue;
+        }
         if (!topic) {
           topic = {
             id: id(),
@@ -699,20 +709,22 @@ class Store {
             task.input.incomplete.reasons.join("；") +
             "\n\n" +
             b.content_md;
-        const format = require("./presentation.cjs").format;
+        const { format, withoutSourceList } = require("./presentation.cjs");
         let body = format(b.content_md, task.input.template.rules, sources);
         const scopeConflict = topic.sources.some(
           (source) => !task.input.sources.some((r) => r.id === source.id),
         );
         if (noteScope && topic.body) {
+          const original = withoutSourceList(
+            topic.body,
+            topic.sources,
+          ).trimEnd();
+          const addition = withoutSourceList(body, sources).trim();
           const existing = new Set(topic.sources.map((ref) => ref.id));
           sources = [
             ...topic.sources,
             ...sources.filter((ref) => !existing.has(ref.id)),
           ];
-          const marker = /\n<!-- generated-sources -->[\s\S]*$/;
-          const original = topic.body.replace(marker, "").trimEnd();
-          const addition = body.replace(marker, "").trim();
           const sourceList = format("", task.input.template.rules, sources);
           body =
             (original.includes(addition)

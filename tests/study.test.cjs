@@ -336,3 +336,17 @@ test("模板编号、重点、列表、来源格式确定呈现，公式不被�
     result,
   );
 });
+
+test("导出分组脚注或追加笔记时只取出原自动来源清单，保留其后的手工批注", () => {
+  const { format, withoutSourceList } = require("../electron/presentation.cjs");
+  const sources = [{ name: "参考读本.pdf", page: 4 }];
+  const body = format("  1. 子步骤", { list_style: "项目符号" }, sources);
+  assert.equal(
+    withoutSourceList(body + "\n\n我的补充", sources),
+    "  - 子步骤\n\n我的补充",
+  );
+  assert.match(
+    withoutSourceList(body.replace("第4页", "我纠正了页码"), sources),
+    /我纠正了页码/,
+  );
+});
