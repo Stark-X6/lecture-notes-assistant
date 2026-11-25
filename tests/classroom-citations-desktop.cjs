@@ -52,11 +52,15 @@ const { Store } = require("../electron/core.cjs");
     id: "u:" + row.id + ":1",
     kind: "transcript",
     targetId: row.id,
+    revision: row.revision,
     lessonId: lesson.id,
     text: row.text,
     startMs: row.startMs,
     endMs: row.endMs,
   });
+  const legacy = transcript(local, current);
+  delete legacy.text;
+  delete legacy.revision;
   store.saveNote(chapter.id, 0, "参考本章的课堂与资料来源。", true, [
     {
       id: "p:slides:3",
@@ -75,7 +79,7 @@ const { Store } = require("../electron/core.cjs");
       page: 2,
       text: oldBook.pages[1],
     },
-    transcript(local, current),
+    legacy,
     transcript(historic, older),
   ]);
   const contexts = store.s.lessons.map((lesson) => lesson.context);
@@ -139,12 +143,58 @@ const { Store } = require("../electron/core.cjs");
     await expect(panel("转录").locator(".highlight")).toHaveText(historic.text);
     await expect(panel("转录").locator(".highlight")).toBeInViewport();
     await expect(panel("转录").getByText(local.text)).toHaveCount(0);
+    await expect(
+      panel("转录").getByRole("region", { name: "引用版本对照" }),
+    ).toHaveCount(0);
+    const revised = "老师更正后采用的表述。";
+    await page.evaluate(
+      ({ id, text }) =>
+        window.desktop.invoke("transcript.revise", {
+          id,
+          revision: 1,
+          text,
+        }),
+      { id: historic.id, text: revised },
+    );
+    await page.getByRole("button", { name: /第二堂课/ }).click();
+    await tab("笔记").click();
+    await page.getByText(/章节来源（4）/).click();
+    await cite(/课堂转录 · 01:00/);
+    await expect(panel("转录").locator(".highlight")).toHaveText(revised);
+    const versions = panel("转录").getByRole("region", {
+      name: "引用版本对照",
+    });
+    await expect(
+      versions.getByText(historic.text, { exact: true }),
+    ).toBeVisible({ timeout: 2000 });
+    await expect(versions.getByText(revised, { exact: true })).toBeVisible();
+    await expect(versions).toContainText("v1");
+    await expect(versions).toContainText("v2");
+    await page.evaluate(
+      ({ id }) =>
+        window.desktop.invoke("transcript.revise", {
+          id,
+          revision: 1,
+          text: "本课修订后的原句。",
+        }),
+      { id: local.id },
+    );
+    await page.getByRole("button", { name: /第二堂课/ }).click();
+    await tab("笔记").click();
+    await page.getByText(/章节来源（4）/).click();
+    await cite(/课堂转录 · 00:02/);
+    await expect(versions.getByText(local.text, { exact: true })).toBeVisible();
+    await expect(versions).toContainText("v1");
     const snapshot = await page.evaluate(() =>
       window.desktop.invoke("snapshot"),
     );
     assert.deepEqual(
       snapshot.lessons.map((lesson) => lesson.context),
       contexts,
+    );
+    assert.equal(
+      snapshot.topics.find((t) => t.id === chapter.id).sources.at(-1).text,
+      historic.text,
     );
     console.log(
       "PASS: independent material reading, repeated citations, cross-lesson sources and unchanged AI scope",

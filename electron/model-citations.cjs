@@ -12,27 +12,36 @@ const span = (start, end) =>
   clock(start) === clock(end) ? clock(start) : clock(start) + "–" + clock(end);
 function renderGroup(text, refs, declared, ambiguous) {
   const items = text.trim().split(/\s*[,，、;；]\s*/u);
-  const locations = new Map();
-  function add(label, value) {
-    if (!locations.has(label)) locations.set(label, new Set());
-    locations.get(label).add(value);
-  }
-  let evidenced = false;
+  const ranges = [];
+  let hasDeclared = false,
+    hasUndeclared = false;
   for (const item of items) {
     const m = item.match(alias);
     if (!m) return null;
     const first = Number(m[2]),
       last = m[3] ? Number(m[3]) : first;
     if (first > last || last - first >= refs.size) return null;
-    const run = [];
+    const kind = m[1];
+    ranges.push({ kind, first, last });
     for (let i = first; i <= last; i++) {
-      const k = m[1] + i,
-        r = refs.get(k);
-      if (!r) return null;
-      evidenced ||= declared.has(k);
-      run.push(r);
+      const key = kind + i;
+      if (!refs.get(key)) return null;
+      if (declared.has(key)) hasDeclared = true;
+      else hasUndeclared = true;
     }
-    if (m[1] !== "T") {
+  }
+  // Only the block's declared sources become clickable evidence or footnotes.
+  if (!hasDeclared) return null;
+  if (hasUndeclared) return "部分引用待核对，见本节来源";
+  const locations = new Map();
+  function add(label, value) {
+    if (!locations.has(label)) locations.set(label, new Set());
+    locations.get(label).add(value);
+  }
+  for (const { kind, first, last } of ranges) {
+    const run = [];
+    for (let i = first; i <= last; i++) run.push(refs.get(kind + i));
+    if (kind !== "T") {
       for (const r of run) {
         if (!Number.isInteger(r.page)) return null;
         const role = r.materialRole === "book" ? "教材" : "课件";
@@ -68,7 +77,6 @@ function renderGroup(text, refs, declared, ambiguous) {
       }
     }
   }
-  if (!evidenced) return null;
   return [...locations]
     .map(([label, parts]) => {
       if (label === "课堂") return label + " " + [...parts].join("、");

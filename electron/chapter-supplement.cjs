@@ -8,6 +8,7 @@ const {
   transcriptRefs,
 } = require("./note-scope.cjs");
 const { format, withoutSourceList } = require("./presentation.cjs");
+const { appendParagraphs } = require("./markdown-prose.cjs");
 const { qualifyEmphasis } = require("./lecture-evidence.cjs");
 const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
 
@@ -206,6 +207,58 @@ function prepare(store, args, fromLesson = false, includeReferences = true) {
     },
   };
 }
+function sourceModes(ref) {
+  return (
+    ref.chapterAdditionModes ||
+    (ref.chapterAddition ? [ref.chapterAddition] : [])
+  );
+}
+
+// Restoring a revision also restores its sources. A task receipt remains in
+// history, but only evidence still in the section or awaiting review is held.
+function contributionCoverage(state) {
+  const held = new Map();
+  const rejected = new Set();
+  const outlineVersions = new Map(
+    state.notebooks.map((n) => [n.id, n.outline?.version]),
+  );
+  const currentTasks = new Set(
+    state.tasks
+      .filter(
+        (t) =>
+          t.supplement &&
+          t.input.chapterOutline.version === outlineVersions.get(t.noteId),
+      )
+      .map((t) => t.id),
+  );
+  function include(topicId, sources) {
+    if (!held.has(topicId)) held.set(topicId, new Set());
+    const keys = held.get(topicId);
+    for (const source of sources) {
+      const modes = sourceModes(source);
+      if (modes.length) keys.add(source.id);
+      for (const mode of modes) keys.add(mode + ":" + source.id);
+    }
+  }
+  for (const topic of state.topics) include(topic.id, topic.sources);
+  for (const candidate of state.candidates) {
+    if (candidate.status === "rejected") rejected.add(candidate.id);
+    if (
+      candidate.kind === "append" &&
+      candidate.status === "pending" &&
+      currentTasks.has(candidate.taskId)
+    )
+      include(candidate.topicId, candidate.sources);
+  }
+  const has = (topicId, sourceId, mode) =>
+    held.get(topicId)?.has(mode ? mode + ":" + sourceId : sourceId);
+  const released = (part, mode) =>
+    rejected.has(part.candidateId)
+      ? part.sourceIds
+      : part.sourceIds.filter((id) => !has(part.topicId, id, mode));
+  return { has, released };
+}
+
 function enqueue(store, args, fromLesson = false) {
   const input = prepare(store, args, fromLesson, false);
   const selected = input.sources.filter((s) => !s.referenceOnly);
@@ -224,34 +277,49 @@ function enqueue(store, args, fromLesson = false) {
   const previous = store.s.tasks.filter(
     (t) => t.supplement && t.routeKey === routeKey && t.state !== "cancelled",
   );
-  const rejected = new Set(
-    store.s.candidates.filter((c) => c.status === "rejected").map((c) => c.id),
-  );
-  const same = previous.findLast(
-    (t) =>
-      t.batchKey === requestedKey &&
-      !t.contributions?.some((part) => rejected.has(part.candidateId)) &&
-      (t.state !== "failed" ||
-        t.input.provider.version === input.provider.version),
-  );
-  if (same) return { ...same, duplicate: true };
+  const coverage = contributionCoverage(store.s);
   const handled = new Set();
-  let covering;
+  const withdrawn = new Set();
+  const reserved = new Set();
+  let same, covering;
   for (const t of previous) {
-    if (!["succeeded", "queued", "running"].includes(t.state) || t.noMatch)
-      continue;
-    const priorIds =
-      t.state === "succeeded"
-        ? t.contributions
-            ?.filter((part) => !rejected.has(part.candidateId))
-            .flatMap((part) => part.sourceIds) ||
-          t.matchedSourceIds ||
-          []
-        : t.input.sources.filter((s) => !s.referenceOnly).map((s) => s.id);
+    let reusable =
+      t.state !== "failed" ||
+      t.input.provider.version === input.provider.version;
+    let priorIds = [];
+    if (t.state === "queued" || t.state === "running") {
+      priorIds = t.input.sources
+        .filter((s) => !s.referenceOnly)
+        .map((s) => s.id);
+      for (const sourceId of priorIds) reserved.add(sourceId);
+    } else if (t.state === "succeeded") {
+      if (t.contributions) {
+        for (const part of t.contributions) {
+          const released = new Set(
+            coverage.released(part, input.provider.mode),
+          );
+          if (released.size) reusable = false;
+          for (const sourceId of part.sourceIds) {
+            if (!released.has(sourceId)) priorIds.push(sourceId);
+            else if (!coverage.has(part.topicId, sourceId, input.provider.mode))
+              withdrawn.add(sourceId);
+          }
+        }
+      } else priorIds = t.matchedSourceIds || [];
+    }
+    if (reusable && t.batchKey === requestedKey) same = t;
     for (const sourceId of priorIds) handled.add(sourceId);
     if (priorIds.some((id) => selectedIds.has(id))) covering = t;
   }
-  const fresh = selected.filter((s) => !handled.has(s.id));
+  const needsRecovery = (s) => withdrawn.has(s.id) && !reserved.has(s.id);
+  if (
+    same &&
+    (same.state !== "succeeded" ||
+      same.noMatch ||
+      !selected.some(needsRecovery))
+  )
+    return { ...same, duplicate: true };
+  const fresh = selected.filter((s) => !handled.has(s.id) || needsRecovery(s));
   if (!fresh.length && covering) return { ...covering, duplicate: true };
   const allowed = new Set(fresh.map((s) => s.id));
   input.sources = input.sources.filter(
@@ -321,25 +389,22 @@ function append(topic, addition, refs, rules) {
   const byId = new Map(topic.sources.map((s) => [s.id, s]));
   for (const ref of refs) {
     const old = byId.get(ref.id);
-    if (
-      !old ||
-      (ref.chapterAddition && old.chapterAddition !== ref.chapterAddition)
-    )
-      byId.set(
-        ref.id,
-        old
-          ? {
-              ...old,
-              chapterAddition: ref.chapterAddition,
-              referenceOnly: false,
-            }
-          : ref,
-      );
+    if (!old) byId.set(ref.id, ref);
+    else if (
+      ref.chapterAddition &&
+      !sourceModes(old).includes(ref.chapterAddition)
+    ) {
+      const modes = [...sourceModes(old), ref.chapterAddition];
+      byId.set(ref.id, {
+        ...old,
+        chapterAddition: ref.chapterAddition,
+        ...(modes.length > 1 ? { chapterAdditionModes: modes } : {}),
+        referenceOnly: false,
+      });
+    }
   }
   const sources = [...byId.values()];
-  const updated = original.includes(addition)
-    ? original
-    : [original, addition].filter(Boolean).join("\n\n");
+  const updated = appendParagraphs(original, addition);
   const body = updated + format("", rules, sources);
   check(body.length <= MAX_NOTE_CHARS, "合入后章节超长，请拆分补充");
   return { body, sources };
@@ -435,7 +500,7 @@ function apply(store, s, t, result) {
 }
 function alreadyAdded(topic, ids, mode) {
   const incorporated = new Set(
-    topic.sources.filter((s) => s.chapterAddition === mode).map((s) => s.id),
+    topic.sources.filter((s) => sourceModes(s).includes(mode)).map((s) => s.id),
   );
   return ids.length > 0 && ids.every((id) => incorporated.has(id));
 }
@@ -497,4 +562,12 @@ function mockResult(input) {
   }
   return { schema_version: "1", blocks: [...groups.values()] };
 }
-module.exports = { prepare, enqueue, stamp, apply, accept, mockResult };
+module.exports = {
+  prepare,
+  enqueue,
+  stamp,
+  apply,
+  accept,
+  mockResult,
+  contributionCoverage,
+};

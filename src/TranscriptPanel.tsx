@@ -19,6 +19,12 @@ import {
   type TranscriptRow,
 } from "./transcriptSelection";
 
+export type TranscriptCitation = {
+  targetId: string;
+  text?: string;
+  revision?: number;
+};
+
 type Props = {
   active: boolean;
   items: TranscriptRow[];
@@ -31,7 +37,7 @@ type Props = {
   onPlay: (item: TranscriptRow) => void;
   onRevise: (item: TranscriptRow) => void;
   stateOf: (item: TranscriptRow) => string;
-  focusSource: { targetId: string } | null;
+  focusSource: TranscriptCitation | null;
   captureActive: boolean;
   waiting: boolean;
   partial: string;
@@ -198,6 +204,16 @@ export function TranscriptPanel(p: Props) {
     setApplied("阅读段落");
     setError("");
   }
+  const cited = p.focusSource;
+  const current = cited && p.items.find((item) => item.id === cited.targetId);
+  const textChanged =
+    current &&
+    cited &&
+    (typeof cited.text === "string"
+      ? cited.text !== current.text
+      : cited.revision != null &&
+        current.revision != null &&
+        cited.revision !== current.revision);
   return (
     <section className="panel transcript-panel">
       <div className="panel-header">
@@ -221,6 +237,29 @@ export function TranscriptPanel(p: Props) {
           </button>
         </div>
       </div>
+      {textChanged && current && cited && (
+        <section aria-label="引用版本对照" className="citation-revisions">
+          <details open>
+            <summary>这条转录已修订</summary>
+            <dl>
+              <div>
+                <dt>
+                  写笔记时引用
+                  {cited.revision != null && ` · v${cited.revision}`}
+                </dt>
+                <dd>{cited.text ?? "原句未保存在这份旧引用中"}</dd>
+              </div>
+              <div>
+                <dt>
+                  当前转录
+                  {current.revision != null && ` · v${current.revision}`}
+                </dt>
+                <dd>{current.text}</dd>
+              </div>
+            </dl>
+          </details>
+        </section>
+      )}
       {p.items.length > 0 && (
         <div className="transcript-tools" ref={toolsRef}>
           <div className="transcript-search">

@@ -353,6 +353,34 @@ button.organize-main {
   min-width: 0;
   font-size: 12px;
 }
+.citation-revisions {
+  flex: none;
+  max-height: 24vh;
+  overflow: auto;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.citation-revisions summary {
+  color: var(--accent-dark);
+  cursor: pointer;
+}
+.citation-revisions dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  gap: 6px 16px;
+  margin: 8px 0 0;
+}
+.citation-revisions dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.citation-revisions dd {
+  margin: 3px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .citation-document span {
   overflow: hidden;
   white-space: nowrap;

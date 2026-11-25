@@ -3,6 +3,7 @@ const path = require("node:path");
 const { randomUUID, createHash } = require("node:crypto");
 const initSql = require("sql.js");
 const { MAX_NOTE_CHARS } = require("./generation-limits.cjs");
+const { appendParagraphs } = require("./markdown-prose.cjs");
 const {
   encryptedTextKey,
   migrateTextSettings,
@@ -166,7 +167,19 @@ class Store {
     for (const c of s.chunks) delete c.path;
     for (const l of s.lessons) l.readiness = this.readiness(l.id);
     for (const a of s.attachments) delete a.path;
-    for (const t of s.tasks) delete t.input;
+    const coverage = require("./chapter-supplement.cjs").contributionCoverage(
+      s,
+    );
+    for (const t of s.tasks) {
+      if (t.supplement)
+        for (const part of t.contributions || []) {
+          const released = part.sourceIds.filter(
+            (id) => !coverage.has(part.topicId, id),
+          );
+          if (released.length) part.releasedSourceIds = released;
+        }
+      delete t.input;
+    }
     return s;
   }
   course(cid) {
@@ -751,10 +764,7 @@ class Store {
             ...sources.filter((ref) => !existing.has(ref.id)),
           ];
           const sourceList = format("", task.input.template.rules, sources);
-          body =
-            (original.includes(addition)
-              ? original
-              : original + "\n\n" + addition) + sourceList;
+          body = appendParagraphs(original, addition) + sourceList;
           check(
             body.length <= MAX_NOTE_CHARS,
             "合入后笔记章节超长，请为补充内容另建章节",

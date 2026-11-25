@@ -237,8 +237,7 @@ async function generate(
     output: "",
     usage: null,
     hasReasoning: false,
-    // Native protocols explicitly signal completion. EOF alone can truncate valid JSON.
-    finishReason: native ? "incomplete" : null,
+    finishReason: null,
   };
   let lastPreview = "",
     previewComplete = !response.headers
@@ -271,6 +270,10 @@ async function generate(
   }
   const chat = {
     perLine: true,
+    done() {
+      // Some gateways use only [DONE]. Preserve a reported limit or refusal.
+      state.finishReason ||= "stop";
+    },
     event(obj) {
       if (obj.error) failTextRequest(0, obj.error);
       const choice = obj.choices?.[0];
@@ -283,7 +286,7 @@ async function generate(
       if (obj.error) failTextRequest(0, obj.error);
       const choice = obj.choices?.[0];
       state.output = choice?.message?.content || "";
-      state.finishReason = choice?.finish_reason || null;
+      state.finishReason = choice?.finish_reason || "stop";
       state.hasReasoning = !!choice?.message?.reasoning_content;
       state.usage = obj.usage;
     },
@@ -306,7 +309,7 @@ async function generate(
       "MODEL_OUTPUT_LIMIT",
       `模型已达到本次 ${config.maxOutput} tokens 输出上限，结果可能被截断；原笔记未覆盖。请提高单次输出上限或缩小资料范围后重新生成。`,
     );
-  if (finishReason && finishReason !== "stop")
+  if (finishReason !== "stop")
     fail(
       "MODEL_INCOMPLETE_OUTPUT",
       "模型因过滤、服务中断或非文本输出而未正常完成；原笔记未覆盖。请检查任务范围或服务状态后重试。",
@@ -369,13 +372,20 @@ class Scheduler {
     this.timer = setInterval(() => this.tick(), 300);
   }
   tick() {
+    const waiting = this.store.s.tasks.filter(
+      (t) =>
+        t.state === "queued" &&
+        !this.running.has(t.id) &&
+        (!t.lessonId || !this.store.lesson(t.lessonId).aiPaused),
+    );
+    if (!waiting.length) return;
     for (const lane of ["live", "background"]) {
       const count = [...this.running.values()].filter(
           (x) => x.lane === lane,
         ).length,
         limit = lane === "live" ? 2 : 1;
-      for (const t of this.store.s.tasks
-        .filter((t) => t.state === "queued" && t.lane === lane)
+      for (const t of waiting
+        .filter((t) => t.lane === lane)
         .slice(0, Math.max(0, limit - count)))
         this.run(t);
     }

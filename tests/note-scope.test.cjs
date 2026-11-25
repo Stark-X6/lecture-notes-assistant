@@ -6,6 +6,7 @@ const os = require("node:os");
 const { Store } = require("../electron/core.cjs");
 const { Scheduler } = require("../electron/provider.cjs");
 const { generate } = require("../electron/provider.cjs");
+const { withoutSourceList } = require("../electron/presentation.cjs");
 
 async function classroom(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lecture-scope-"));
@@ -208,6 +209,31 @@ test("选定课件限制证据和旧笔记上下文，教材只补充与所选�
     store.lessonTopics(second.id)[0].id,
   );
   assert.ok(topic.sources.some((s) => s.id === "old"));
+});
+
+test("旧笔记按课件续写时保留示例里的原句，正文中已追加的完整段落只出现一次", async (t) => {
+  const { store, second, topic, slides } = await classroom(t);
+  const addition = "应当记录等待时间。";
+  const original = "格式示例\n\n~~~text\n\n" + addition + "\n\n~~~";
+  store.saveNote(topic.id, topic.version, original);
+  store.setContext(second.id, { slides: { id: slides.id, from: 2, to: 2 } });
+  for (const lecture of ["课堂要求记录等待时间", "另一个例子也记录等待时间"]) {
+    const turn = store.addUtterance(second.id, lecture);
+    const task = store.enqueue(second.id, { uids: [turn.id] });
+    const page = task.input.sources.find((r) => r.materialRole === "slides");
+    const speech = task.input.sources.find((r) => r.targetId === turn.id);
+    task.state = "running";
+    store.applyResult(
+      task.id,
+      result(block(topic.id, topic.title, addition, page, speech)),
+    );
+    store.candidate(store.s.candidates.at(-1).id, true, topic.version);
+    assert.equal(
+      withoutSourceList(topic.body, topic.sources),
+      original + "\n\n" + addition,
+    );
+    assert.ok(topic.sources.some((s) => s.targetId === turn.id));
+  }
 });
 
 test("教材或课件排序以引用页为准，整课分批仍保留本次课件证据", async (t) => {

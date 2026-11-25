@@ -1,6 +1,6 @@
 {
   "name": "lecture-notes-desktop",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "本地优先的听课笔记助手 Windows / macOS 桌面版",
   "author": "Lecture Notes",
@@ -61,7 +61,7 @@
     "appId": "cn.lecturenotes.desktop",
     "productName": "听课笔记助手",
     "directories": {
-      "output": "release-v0.9.0"
+      "output": "release-v0.9.1"
     },
     "files": [
       "dist/**/*",

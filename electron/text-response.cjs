@@ -49,25 +49,26 @@ function parseWireJson(text) {
 
 // An SSE event can span UTF-8 chunks and multiple data lines. Ignore comments
 // and allow LF, CRLF and CR line endings, including split CRLF pairs.
-function eventStream(accept, perLine) {
+function eventStream(parser) {
   let tail = [],
     data = [],
     event = "",
     afterCR = false;
   function dispatch() {
     const payload = data.join("\n").trim();
-    if (payload && payload !== "[DONE]") accept(parseWireJson(payload), event);
+    if (payload === "[DONE]") parser.done?.();
+    else if (payload) parser.event(parseWireJson(payload), event);
     data = [];
     event = "";
   }
   function line(value) {
-    if (perLine) value = value.trim();
+    if (parser.perLine) value = value.trim();
     if (value === "") dispatch();
     else if (value.startsWith("data:")) {
       data.push(value.slice(5).replace(/^ /, ""));
       // Older Chat Completions gateways can use one data line per packet
       // without the blank lines that the native SSE protocols specify.
-      if (perLine) dispatch();
+      if (parser.perLine) dispatch();
     } else if (value.startsWith("event:")) event = value.slice(6).trim();
   }
   return {
@@ -95,7 +96,7 @@ async function readTextResponse(response, maxBytes, signal, parser) {
   const stream = response.headers
     .get("content-type")
     ?.includes("text/event-stream")
-    ? eventStream(parser.event, parser.perLine)
+    ? eventStream(parser)
     : null;
   if (!response.body) fail("PROVIDER_ERROR", "文本服务未返回响应正文");
   const reader = response.body.getReader(),

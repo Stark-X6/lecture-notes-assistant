@@ -386,6 +386,8 @@ test("拒绝的同批补充允许重新生成，重新指定已补过的小节�
   assert.notEqual(retry.id, first.id);
   complete(store, retry, a, "新版建议", [retry.input.sources[0].id]);
   store.candidate(store.s.candidates.at(-1).id, true, a.version);
+  const receipt = store.snapshot().tasks.find((t) => t.id === first.id);
+  assert.deepEqual(receipt.contributions[0].releasedSourceIds || [], []);
   const manual = submit({ materials, targetId: a.id });
   complete(store, manual, a, "同义再写一遍", [manual.input.sources[0].id]);
   assert.doesNotMatch(a.body, /同义再写一遍/);
@@ -407,4 +409,129 @@ test("跨笔记选用的历史转录不占用原课堂的进度与旧版整理",
   const old = store.enqueue(original.id, { uids: [u.id] });
   assert.equal(old.input.noteId, original.noteId);
   assert.notEqual(old.input.noteId, note.id);
+});
+
+test("恢复某节旧版后重启并重交同一批，只补回该节已撤回的来源", async (t) => {
+  const { store, lesson, a, b } = await setup(t);
+  store.saveNote(a.id, 0, "手写登记说明");
+  const first = store.addUtterance(lesson.id, "登记时记录日期");
+  const second = store.addUtterance(lesson.id, "核查时复读证件号");
+  const batch = { uids: [first.id, second.id] };
+  const job = store.enqueue(lesson.id, batch);
+  job.state = "running";
+  store.applyResult(job.id, {
+    schema_version: "1",
+    blocks: [a, b].map((topic, i) => ({
+      topic_id: topic.id,
+      title: topic.title,
+      content_md: job.input.sources[i].text,
+      source_ids: [job.input.sources[i].id],
+      evidence_type: "teacher_explanation",
+    })),
+  });
+  store.candidate(store.s.candidates[0].id, true, a.version);
+  const beforeAppend = store.s.revisions.find(
+    (r) => r.topicId === a.id && r.version === 1,
+  );
+  store.restore(beforeAppend.id, a.version);
+  const restarted = await Store.open(store.root);
+  t.after(() => restarted.db.close());
+
+  const receipt = restarted.snapshot().tasks.find((t) => t.id === job.id);
+  assert.deepEqual(receipt.contributions[0].releasedSourceIds, [
+    job.input.sources[0].id,
+  ]);
+  assert.deepEqual(receipt.contributions[1].releasedSourceIds || [], []);
+  const again = restarted.enqueue(lesson.id, batch);
+  assert.notEqual(again.id, job.id);
+  assert.deepEqual(
+    again.input.utterances.map((u) => u.id),
+    [first.id],
+  );
+  complete(restarted, again, a, "重新核对登记日期", [
+    again.input.sources[0].id,
+  ]);
+  const pending = restarted.s.candidates.filter((c) => c.status === "pending");
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].topicId, a.id);
+  const current = restarted.s.topics.find((topic) => topic.id === a.id);
+  assert.equal(current.body, "手写登记说明");
+  restarted.candidate(pending[0].id, true, current.version);
+  assert.match(current.body, /手写登记说明\n\n重新核对登记日期/);
+  assert.deepEqual(
+    current.sources.map((s) => s.targetId),
+    [first.id],
+  );
+  assert.deepEqual(
+    restarted.s.topics.find((topic) => topic.id === b.id),
+    b,
+  );
+  assert.ok(restarted.enqueue(lesson.id, batch).duplicate);
+  assert.equal(restarted.s.tasks.length, 2);
+});
+
+test("同一页补过两节时，恢复一节可重交，另一节与待确认候选都不重复", async (t) => {
+  const { store, submit, a, b } = await setup(t);
+  const materials = [{ id: "book", role: "book", from: 1, to: 1 }];
+  const first = submit({ materials });
+  const result = {
+    schema_version: "1",
+    blocks: [a, b].map((topic) => ({
+      topic_id: topic.id,
+      title: topic.title,
+      content_md: topic.title + "的例子",
+      source_ids: [first.input.sources[0].id],
+      evidence_type: "textbook_supplement",
+    })),
+  };
+  first.state = "running";
+  store.applyResult(first.id, result);
+  const original = store.s.revisions.find((r) => r.topicId === a.id);
+  store.restore(original.id, a.version);
+  const again = submit({ materials });
+  assert.notEqual(again.id, first.id);
+  assert.equal(submit({ materials }).id, again.id);
+  again.state = "running";
+  store.applyResult(again.id, result);
+  assert.equal(b.version, 1);
+  assert.deepEqual(
+    store.s.candidates.map((c) => c.topicId),
+    [a.id],
+  );
+  assert.ok(submit({ materials }).duplicate);
+  assert.equal(store.s.tasks.length, 2);
+});
+
+test("过期骨架的待确认候选不会占住新版骨架已撤回的来源", async (t) => {
+  const { store, submit, note, a } = await setup(t);
+  store.saveNote(a.id, 0, "手写登记说明");
+  const batch = { materials: [{ id: "book", role: "book", from: 1, to: 1 }] };
+  const old = submit(batch);
+  complete(store, old, a, "旧骨架的候选", [old.input.sources[0].id]);
+  store.tx(() => note.outline.version++);
+  const current = submit(batch);
+  complete(store, current, a, "新版登记说明", [current.input.sources[0].id]);
+  store.candidate(store.s.candidates.at(-1).id, true, a.version);
+  const previous = store.s.revisions.find(
+    (r) => r.topicId === a.id && r.version === 1,
+  );
+  store.restore(previous.id, a.version);
+  assert.equal(submit(batch).state, "queued");
+});
+
+test("确认追加保留手写句中的否定，新增的完整陈述单独落笔", async (t) => {
+  const { store, submit, a } = await setup(t);
+  const original = "误解：登记时不需要核查证件。";
+  store.saveNote(a.id, 0, original);
+  const job = submit({
+    materials: [{ id: "book", role: "book", from: 2, to: 2 }],
+    targetId: a.id,
+  });
+  complete(store, job, a, "需要核查证件。", [job.input.sources[0].id]);
+  store.candidate(store.s.candidates[0].id, true, a.version);
+  assert.match(a.body, /误解：登记时不需要核查证件。\n\n需要核查证件。/);
+  assert.deepEqual(
+    a.sources.map((s) => s.page),
+    [2],
+  );
 });

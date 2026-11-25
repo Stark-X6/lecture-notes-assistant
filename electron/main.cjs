@@ -968,10 +968,14 @@ async function exportNotes(lid) {
   const l = store.lesson(lid),
     c = store.course(l.courseId);
   const notebook = store.s.notebooks.find((n) => n.id === l.noteId);
-  const topics = clone(store.lessonTopics(lid));
-  const headings = require("./presentation.cjs").chapterHeadings(
+  const {
+    chapterSections,
+    nestMarkdown,
+    withoutSourceList,
+  } = require("./presentation.cjs");
+  const sections = chapterSections(
     notebook,
-    topics,
+    clone(store.lessonTopics(lid)),
     store.s.materials,
   );
   const result = await dialog.showOpenDialog(win, {
@@ -987,19 +991,13 @@ async function exportNotes(lid) {
   fs.mkdirSync(temp, { recursive: true });
   let body = `# ${notebook.name}\n\n`;
   const footnotes = new Map();
-  for (const t of topics) {
+  for (const { topic: t, level, heading } of sections) {
     const exported = require("./attachments.cjs").exportMarkdown(
       store,
-      require("./presentation.cjs").withoutSourceList(t.body, t.sources),
+      withoutSourceList(t.body, t.sources),
       temp,
     );
-    const heading = headings.get(t.id);
-    const content = notebook.outline
-      ? require("./presentation.cjs").nestMarkdown(
-          exported.body,
-          heading.match(/^#+/)[0].length,
-        )
-      : exported.body;
+    const content = nestMarkdown(exported.body, level);
     body += `${heading}\n\n${content}\n\n`;
     if (exported.missing.length)
       body += "> 缺失附件：" + exported.missing.join("、") + "\n\n";
@@ -1057,7 +1055,10 @@ async function exportNotes(lid) {
         exportedAt: new Date().toISOString(),
         course: c.name,
         lesson: l.name,
-        versions: topics.map((t) => ({ topicId: t.id, version: t.version })),
+        versions: sections.map(({ topic }) => ({
+          topicId: topic.id,
+          version: topic.version,
+        })),
         sources: footnotes.size,
       },
       null,

@@ -42,7 +42,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { Markdown } from "./Markdown";
-import { TranscriptPanel } from "./TranscriptPanel";
+import { getTranscriptStates } from "./transcriptSelection";
+import { TranscriptPanel, type TranscriptCitation } from "./TranscriptPanel";
 import {
   ClassroomPage,
   ClassroomTabs,
@@ -104,7 +105,7 @@ type MaterialJump = {
   page: number;
 };
 type SourceJump =
-  MaterialJump | { tab: "transcript"; targetId: string; lessonId: string };
+  MaterialJump | (TranscriptCitation & { tab: "transcript"; lessonId: string });
 const statusNames: Obj = {
   queued: "等待整理",
   running: "整理中",
@@ -244,40 +245,10 @@ function App() {
     () => notebookRows(topics, notebook),
     [topics, notebook],
   );
-  const transcriptStates = useMemo(() => {
-    const submitted = new Map<string, string[]>();
-    for (const e of s?.events || [])
-      if (e.type === "submission.created")
-        submitted.set(e.payload.taskId, e.payload.sourceIds);
-    const rejected = new Set(
-      (s?.candidates || [])
-        .filter((c: Obj) => c.status === "rejected")
-        .map((c: Obj) => c.id),
-    );
-    const released = new Set<string>();
-    const states = new Map<string, string>();
-    for (const t of tasks) {
-      if (t.type !== "notes" || t.state !== "succeeded") continue;
-      if (t.supplement && t.noteId !== notebook?.id) continue;
-      for (const id of submitted.get(t.id) || []) {
-        if (!t.supplement) states.set(id, "已整理");
-        else if (!states.has(id)) states.set(id, "未匹配");
-      }
-      if (t.supplement) {
-        const parts = t.contributions || [
-          { sourceIds: t.matchedSourceIds || [] },
-        ];
-        for (const part of parts)
-          for (const id of part.sourceIds) {
-            if (rejected.has(part.candidateId)) released.add(id);
-            else states.set(id, "已整理");
-          }
-      }
-    }
-    for (const id of released)
-      if (states.get(id) !== "已整理") states.set(id, "待提交");
-    return states;
-  }, [tasks, s?.events, s?.candidates, notebook?.id]);
+  const transcriptStates = useMemo(
+    () => getTranscriptStates(tasks, s?.events || [], notebook?.id),
+    [tasks, s?.events, notebook?.id],
+  );
   useEffect(() => {
     if (!s) return;
     if (!course) {
@@ -423,12 +394,30 @@ function App() {
     } else if (ref.kind === "transcript") {
       const item = s?.utterances.find((u: Obj) => u.id === ref.targetId);
       if (item && lessons.some((l: Obj) => l.id === item.lessonId)) {
+        // Older citations may encode the revision only in their source ID.
+        const prefix = `u:${item.id}:`;
+        const storedRevision =
+          typeof ref.id === "string" && ref.id.startsWith(prefix)
+            ? Number(ref.id.slice(prefix.length))
+            : undefined;
+        const revision =
+          ref.revision ??
+          (storedRevision != null &&
+          Number.isSafeInteger(storedRevision) &&
+          storedRevision > 0
+            ? storedRevision
+            : undefined);
         const reveal = () => {
           selectTab("transcript", item.lessonId);
           setSourceJump({
             tab: "transcript",
             targetId: item.id,
             lessonId: item.lessonId,
+            text:
+              ref.text ??
+              item.history?.find((entry: Obj) => entry.revision === revision)
+                ?.text,
+            revision,
           });
         };
         if (item.lessonId === lid) reveal();

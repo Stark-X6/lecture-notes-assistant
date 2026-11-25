@@ -1,6 +1,7 @@
 export type TranscriptRow = {
   id: string;
   text: string;
+  revision?: number;
   startMs: number | null;
   endMs?: number | null;
   final?: boolean;
@@ -104,6 +105,42 @@ export type TranscriptGroup = {
   characters: number;
   items: TranscriptRow[];
 };
+
+export function getTranscriptStates(
+  tasks: Record<string, any>[],
+  events: Record<string, any>[],
+  noteId?: string,
+) {
+  const submitted = new Map<string, string[]>();
+  for (const event of events)
+    if (event.type === "submission.created")
+      submitted.set(event.payload.taskId, event.payload.sourceIds);
+  const released = new Set<string>();
+  const states = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.type !== "notes" || task.state !== "succeeded") continue;
+    if (task.supplement && task.noteId !== noteId) continue;
+    for (const id of submitted.get(task.id) || []) {
+      if (!task.supplement) states.set(id, "已整理");
+      else if (!states.has(id)) states.set(id, "未匹配");
+    }
+    if (task.supplement) {
+      const parts = task.contributions || [
+        { sourceIds: task.matchedSourceIds || [] },
+      ];
+      for (const part of parts) {
+        const withdrawn = new Set(part.releasedSourceIds);
+        for (const id of part.sourceIds) {
+          if (withdrawn.has(id)) released.add(id);
+          else states.set(id, "已整理");
+        }
+      }
+    }
+  }
+  for (const id of released) states.set(id, "待提交");
+  return states;
+}
+
 export function groupTranscript(items: TranscriptRow[]): TranscriptGroup[] {
   const groups: TranscriptGroup[] = [];
   for (const item of items) {

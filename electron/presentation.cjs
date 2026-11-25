@@ -78,34 +78,48 @@ function format(body, rules = {}, sources = []) {
   }
   return body;
 }
-function chapterHeadings(notebook, topics, materials) {
-  const members = new Set(notebook.outline?.topicIds || []);
-  const byId = new Map(topics.map((t) => [t.id, t]));
+function chapterSections(notebook, topics, materials) {
+  const order = notebook.outline?.topicIds || [];
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const ordered = [...topics].sort(
+    (a, b) =>
+      (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length),
+  );
+  const ids = new Set(topics.map((t) => t.id));
+  const children = new Map();
+  for (const topic of ordered) {
+    const parent = ids.has(topic.parentId) ? topic.parentId : null;
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(topic);
+  }
   const source = materials.find((m) => m.id === notebook.outline?.materialId);
+  const sections = [],
+    visited = new Set();
+  function visit(topic, level) {
+    if (visited.has(topic.id)) return;
+    visited.add(topic.id);
+    let heading = "#".repeat(level) + " " + topic.title;
+    const range = topic.outlineRange;
+    if (rank.has(topic.id) && source && range?.materialId === source.id) {
+      const pages =
+        range.from === range.to ? range.from : `${range.from}–${range.to}`;
+      heading += `\n\n> 骨架依据：${source.name}，第 ${pages} 页`;
+    }
+    sections.push({ topic, level, heading });
+    for (const child of children.get(topic.id) || [])
+      visit(child, Math.min(6, level + 1));
+  }
+  for (const root of children.get(null) || []) visit(root, 2);
+  // Match the reader's fallback for historical notes with a circular parent.
+  for (const topic of ordered) if (!visited.has(topic.id)) visit(topic, 2);
+  return sections;
+}
+function chapterHeadings(notebook, topics, materials) {
   return new Map(
-    topics.map((topic) => {
-      let level = 2,
-        parentId = topic.parentId;
-      const seen = new Set([topic.id]);
-      while (
-        members.has(topic.id) &&
-        members.has(parentId) &&
-        byId.has(parentId) &&
-        !seen.has(parentId)
-      ) {
-        seen.add(parentId);
-        level++;
-        parentId = byId.get(parentId).parentId;
-      }
-      let heading = "#".repeat(Math.min(level, 6)) + " " + topic.title;
-      const range = topic.outlineRange;
-      if (members.has(topic.id) && source && range?.materialId === source.id) {
-        const pages =
-          range.from === range.to ? range.from : `${range.from}–${range.to}`;
-        heading += `\n\n> 骨架依据：${source.name}，第 ${pages} 页`;
-      }
-      return [topic.id, heading];
-    }),
+    chapterSections(notebook, topics, materials).map(({ topic, heading }) => [
+      topic.id,
+      heading,
+    ]),
   );
 }
 function nestMarkdown(body, sectionLevel) {
@@ -132,4 +146,10 @@ function nestMarkdown(body, sectionLevel) {
     })
     .join("\n");
 }
-module.exports = { format, withoutSourceList, chapterHeadings, nestMarkdown };
+module.exports = {
+  format,
+  withoutSourceList,
+  chapterHeadings,
+  chapterSections,
+  nestMarkdown,
+};

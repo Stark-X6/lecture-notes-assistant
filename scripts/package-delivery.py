@@ -18,8 +18,12 @@ for folder in ['src', 'electron', 'tests', 'docs', 'scripts', 'build']:
         if file.is_file() and file.suffix in ['.tsx','.ts','.css','.cjs','.mjs','.js','.html','.md','.py','.plist']:
             if file.is_symlink(): raise RuntimeError('Unexpected symbolic link')
             entries.append((file, file.relative_to(root).as_posix()))
-for filename in ['.gitignore','index.html','package.json','package-lock.json','tsconfig.json','vite.config.mjs','README.md']:
-    entries.append((root / filename, filename))
+for filename in ['.gitignore','index.html','package.json','package-lock.json','tsconfig.json','vite.config.mjs','README.md',
+                 'electron/text-providers.json']:
+    file = root / filename
+    if not file.is_file() or file.is_symlink():
+        raise RuntimeError(f'Missing regular delivery file: {filename}')
+    entries.append((file, filename))
 installer = root / release / f'LectureNotes-Setup-{version}.exe'
 if installer.is_file(): entries.append((installer, installer.relative_to(root).as_posix()))
 for file in sorted((root / release / 'win-unpacked').rglob('*')):
@@ -46,8 +50,7 @@ docs\\acceptance.md：已验证内容和未完成验收项。
 安装开发环境后执行 npm ci，再按 README 启动。
 
 四、版本说明
-这是桌面试用版，安装包未签名。已完成 46 项回归测试与桌面流程验证。
-实际供应商 API、真实麦克风、90 分钟课堂及性能目标尚需验收。
+这是桌面试用版，安装包未签名。当前版本的测试环境、已验证项目和剩余限制见 docs/acceptance.md。
 服务商、模型和密钥由使用者在设置页填写；专有语音协议需额外适配。
 本地ASR模型需在设置中另行下载。此包不包含个人课程数据库、录音、API 密钥、开发依赖、缓存或测试数据。
 win-unpacked 中的运行时文件属于软件必需部分，不能删除。

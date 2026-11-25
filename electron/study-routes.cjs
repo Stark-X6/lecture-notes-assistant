@@ -193,24 +193,19 @@ function routes(context) {
           (n) => n.id === a.noteId && n.courseId === a.courseId,
         );
         check(notebook);
-        items = clone(store.s.topics.filter((t) => t.noteId === notebook.id));
-        const headings = require("./presentation.cjs").chapterHeadings(
+        const { chapterSections, nestMarkdown } = require("./presentation.cjs");
+        const sections = chapterSections(
           notebook,
-          items,
+          clone(store.s.topics.filter((t) => t.noteId === notebook.id)),
           store.s.materials,
         );
+        items = sections.map(({ topic }) => topic);
         markdown = [
           "# " + notebook.name,
-          ...items.map((t) => {
-            const heading = headings.get(t.id);
-            const body = notebook.outline
-              ? require("./presentation.cjs").nestMarkdown(
-                  t.body,
-                  heading.match(/^#+/)[0].length,
-                )
-              : t.body;
-            return heading + "\n\n" + body;
-          }),
+          ...sections.map(
+            ({ topic, level, heading }) =>
+              heading + "\n\n" + nestMarkdown(topic.body, level),
+          ),
         ].join("\n\n");
       } else {
         const item = store.s.artifacts.find(

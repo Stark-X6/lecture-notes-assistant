@@ -19,6 +19,7 @@ const {
   selectTimeRange,
   selectParagraphRange,
   groupTranscript,
+  getTranscriptStates,
 } = loaded.exports;
 const row = (id, startMs, endMs, final = true) => ({
   id,
@@ -26,6 +27,24 @@ const row = (id, startMs, endMs, final = true) => ({
   startMs,
   endMs,
   final,
+});
+test("同段转录归入两节，只要一节撤回，课堂仍显示待提交", () => {
+  const source = "u:lecture:1";
+  const task = {
+    id: "batch",
+    type: "notes",
+    state: "succeeded",
+    supplement: true,
+    noteId: "chapter",
+    contributions: [
+      { topicId: "a", sourceIds: [source], releasedSourceIds: [source] },
+      { topicId: "b", sourceIds: [source] },
+    ],
+  };
+  assert.equal(
+    getTranscriptStates([task], [], "chapter").get(source),
+    "待提交",
+  );
 });
 test("时间输入支持秒、跨小时与毫秒，拒绝错误进位和无效值", () => {
   for (const [value, want] of [
